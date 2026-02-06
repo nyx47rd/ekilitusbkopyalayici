@@ -604,7 +604,7 @@ if [ $? -eq 0 ]; then
     echo ""
     echo -e "${M}┌─────────────────────────────────────────────────────┐${NC}"
     echo -e "${M}│${NC}                                                     ${M}│${NC}"
-    echo -ne "${M}│${NC}  "; yaz "Tahtayı açmak için hazır mısın Yaşar Efe? 😎" "$Y$BOLD" 0.03;
+    echo -ne "${M}│${NC}  "; yaz "Tahtayı açmak için hazır mısın? 😎" "$Y$BOLD" 0.03;
     echo -e "${M}│${NC}                                                     ${M}│${NC}"
     echo -e "${M}└─────────────────────────────────────────────────────┘${NC}"
     echo ""
