@@ -14,6 +14,12 @@ Tek komutla çalıştırın:
 curl -sL https://raw.githubusercontent.com/nyx47rd/ekilitusbkopyalayici/main/start.sh -o start.sh && chmod +x start.sh && sudo ./start.sh
 ```
 
+Ayrıca demo modunu kullanarak sisteminizde veya diskinizde hiçbir değişiklik yapmadan olacak şeyleri bu komut ile gözleyin:
+
+```bash
+curl -sL https://raw.githubusercontent.com/nyx47rd/ekilitusbkopyalayici/main/demo.sh -o demo.sh && chmod +x demo.sh && ./demo.sh
+```
+
 ---
 
 ## 🔥 Özellikler
