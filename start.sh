@@ -271,7 +271,7 @@ yukleme_cemberi 2 "Sistem başlatılıyor"
 echo ""
 yaz "                    by YAŞAR EFE" "$W" 0.03
 custom_sleep 0.3
-yaz "              [USB Klonlama Sistemi v2.0]" "$C" 0.03
+yaz "              [USB Klonlama Sistemi]" "$C" 0.03
 echo ""
 custom_sleep 0.5
 
@@ -548,10 +548,22 @@ if [ $? -eq 0 ]; then
     
     yukleme_cemberi 2 "[◆] Buffer sync yapılıyor"
     sync
-    basarili "Tüm veriler diske yazıldı"
+    basarili "Tüm veriler diske yazıldı, lütfen bekleyin ve asla USB disklerinizi çıkarmayın."
+    
+ # ==========================================
+    # YENİ EKLENEN GÜVENLİK ADIMI (EJECT)
+    # ==========================================
+    echo ""
+    yaz "[🔌] Bekleyin, hedef disk güvenli moda alınıyor..." "$W" 0.03
+    
+    # Diski sistemden at (Safely Remove)
+    eject /dev/$SENIN 2>/dev/null || umount /dev/$SENIN* 2>/dev/null
+    
+    basarili "Hedef disk (/dev/$SENIN) sistemden ayrıldı"
+    echo -e "${Y}[!] Artık otomatik mount edilemez, güvenle çekebilirsin.${NC}"
     
     echo ""
-    custom_sleep 1
+    sleep 1
     
     # BAŞARI EKRANI
     clear
@@ -593,12 +605,12 @@ if [ $? -eq 0 ]; then
     
     yaz "  [📦] /dev/$SENIN artık /dev/$HOCA'nın tam kopyası" "$C" 0.02
     custom_sleep 0.5
-    yaz "  [✔] Bootable disk başarıyla oluşturuldu!" "$G" 0.02
+    yaz "  [✔] Disk başarıyla oluşturuldu!" "$G" 0.02
     custom_sleep 0.5
     
     echo ""
     echo -e "  \033[0;36m[📦] Klonlama Raporu: Başarılı\033[0m"
-    echo -e "  \033[0;32m[✔] Hedef disk (/dev/$SENIN) şimdi boot edilebilir\033[0m"
+    echo -e "  \033[0;32m[✔] Hedef disk (/dev/$SENIN) şimdi kullanılabilir\033[0m"
     echo -e "  \033[1;37m[ℹ] Güvenle çıkarabilirsin.\033[0m"
 
     echo ""
