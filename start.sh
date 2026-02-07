@@ -25,37 +25,67 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
-# awk/bc kontrolü
+# awk kontrolü
 if ! command -v awk &> /dev/null; then
     echo -e "${Y}[!] Gerekli araçlar yükleniyor (awk)...${NC}"
     apt-get install -y gawk &> /dev/null || yum install -y gawk &> /dev/null
 fi
 
 # ========================================
-# HIZLI MOD SEÇİMİ (YENİ)
+# MOD SEÇİMİ (3 SEÇENEK)
 # ========================================
 clear
-echo -e "${C}┌──────────────────────────────────────────────┐${NC}"
-echo -e "${C}│${NC} ${BOLD}Animasyon Modu Seçimi${NC}                        ${C}│${NC}"
-echo -e "${C}├──────────────────────────────────────────────┤${NC}"
-echo -e "${C}│${NC} [Enter] : Animasyonlu (Hacker Modu)          ${C}│${NC}"
-echo -e "${C}│${NC} [H]     : Hızlı Mod (Animasyon Yok)          ${C}│${NC}"
-echo -e "${C}└──────────────────────────────────────────────┘${NC}"
-echo -ne "${Y}Seçiminiz: ${NC}"
+echo -e "${C}┌──────────────────────────────────────────────────────┐${NC}"
+echo -e "${C}│${NC} ${BOLD}${W}        Çalışma Modu Seçimi${NC}                          ${C}│${NC}"
+echo -e "${C}├──────────────────────────────────────────────────────┤${NC}"
+echo -e "${C}│${NC}                                                      ${C}│${NC}"
+echo -e "${C}│${NC}  ${G}[1]${NC}  ${W}Animasyonlu Mod${NC} ${Y}(Manuel ilerleme)${NC}              ${C}│${NC}"
+echo -e "${C}│${NC}       ${C}Her adımda ENTER'a basarak ilerlersin${NC}         ${C}│${NC}"
+echo -e "${C}│${NC}                                                      ${C}│${NC}"
+echo -e "${C}│${NC}  ${G}[2]${NC}  ${W}Hızlı Mod${NC} ${Y}(Animasyon yok)${NC}                     ${C}│${NC}"
+echo -e "${C}│${NC}       ${C}Tüm süslemeler atlanır, sadece iş yapılır${NC}    ${C}│${NC}"
+echo -e "${C}│${NC}                                                      ${C}│${NC}"
+echo -e "${C}│${NC}  ${G}[3]${NC}  ${W}Otomatik Mod${NC} ${Y}(Animasyonlu, durmadan)${NC}          ${C}│${NC}"
+echo -e "${C}│${NC}       ${C}Animasyonlar oynar ama ENTER beklemez${NC}         ${C}│${NC}"
+echo -e "${C}│${NC}       ${C}Adımlar arası otomatik geçiş (3sn bekleme)${NC}   ${C}│${NC}"
+echo -e "${C}│${NC}                                                      ${C}│${NC}"
+echo -e "${C}└──────────────────────────────────────────────────────┘${NC}"
+echo ""
+echo -ne "${Y}Seçiminiz [1/2/3]: ${NC}"
 read -r MOD_SECIM
 
-if [[ "$MOD_SECIM" =~ ^[Hh] ]]; then
-    HIZLI_MOD=1
-    echo -e "\n${G}[✓] Hızlı mod aktif. Süslemeler atlanıyor...${NC}\n"
-else
-    HIZLI_MOD=0
-fi
+case "$MOD_SECIM" in
+    2)
+        HIZLI_MOD=1
+        OTOMATIK_MOD=0
+        ADIM_BEKLEME=0
+        echo -e "\n${G}[✓] Hızlı mod aktif. Süslemeler atlanıyor...${NC}\n"
+        ;;
+    3)
+        HIZLI_MOD=0
+        OTOMATIK_MOD=1
+        ADIM_BEKLEME=3
+        echo -e "\n${G}[✓] Otomatik mod aktif. Animasyonlar oynar, adımlar otomatik geçer...${NC}"
+        echo -ne "${Y}Adımlar arası bekleme süresi (saniye) [varsayılan=3]: ${NC}"
+        read -r SURE_SECIM
+        if [[ "$SURE_SECIM" =~ ^[0-9]+$ ]] && [ "$SURE_SECIM" -gt 0 ]; then
+            ADIM_BEKLEME=$SURE_SECIM
+        fi
+        echo -e "${C}[ℹ] Adımlar arası bekleme: ${ADIM_BEKLEME} saniye${NC}\n"
+        ;;
+    *)
+        HIZLI_MOD=0
+        OTOMATIK_MOD=0
+        ADIM_BEKLEME=0
+        echo -e "\n${G}[✓] Animasyonlu mod aktif. Her adımda ENTER beklenecek...${NC}\n"
+        ;;
+esac
 
 # ========================================
 # YARDIMCI FONKSİYONLAR
 # ========================================
 
-# Akıllı Sleep (Hızlı moddaysa beklemez)
+# Akıllı Sleep
 custom_sleep() {
     if [ "$HIZLI_MOD" -eq 0 ]; then
         sleep "$1"
@@ -68,7 +98,6 @@ yaz() {
     local color="${2:-$NC}"
     local delay=${3:-0.03}
     
-    # Hızlı moddaysa direkt yaz ve çık
     if [ "$HIZLI_MOD" -eq 1 ]; then
         echo -e "${color}${text}${NC}"
         return
@@ -174,9 +203,61 @@ scan_anim() {
     done
 }
 
-# Adım İlerletme
+# =====================================================
+# ADIM İLERLETME - MOD'A GÖRE DAVRANIŞI DEĞİŞİR
+# =====================================================
 ileri() {
     echo ""
+    
+    # Mod 2: Hızlı mod - hiç bekleme yok
+    if [ "$HIZLI_MOD" -eq 1 ]; then
+        echo -e "${G}[→] Sonraki adıma geçiliyor...${NC}"
+        return
+    fi
+    
+    # Mod 3: Otomatik mod - animasyonlu geri sayım, ENTER gerektirmez
+    if [ "$OTOMATIK_MOD" -eq 1 ]; then
+        echo -e "${M}╔═════════════════════════════════════════════════════╗${NC}"
+        echo -e "${M}║${NC}                                                     ${M}║${NC}"
+        echo -e "${M}║${NC}     ${BOLD}${C}⏳ Sonraki adıma otomatik geçiliyor...${NC}          ${M}║${NC}"
+        echo -e "${M}║${NC}                                                     ${M}║${NC}"
+        echo -e "${M}╚═════════════════════════════════════════════════════╝${NC}"
+        echo ""
+        
+        for ((kalan=ADIM_BEKLEME; kalan>=1; kalan--)); do
+            # Geri sayım çubuğu
+            local dolu=$((  (ADIM_BEKLEME - kalan) * 30 / ADIM_BEKLEME  ))
+            local bos=$(( 30 - dolu ))
+            printf "\r  ${C}[${NC}"
+            for ((b=0; b<dolu; b++)); do printf "${G}▓${NC}"; done
+            for ((b=0; b<bos; b++)); do printf "${W}░${NC}"; done
+            printf "${C}]${NC} ${BOLD}${Y}%2d saniye${NC} " $kalan
+            
+            # Dönen animasyon
+            local spin_chars='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+            for ((f=0; f<5; f++)); do
+                local spin_idx=$(( (f + kalan) % ${#spin_chars} ))
+                printf "\r  ${C}[${NC}"
+                local dolu2=$((  (ADIM_BEKLEME - kalan) * 30 / ADIM_BEKLEME + f * 30 / (ADIM_BEKLEME * 5)  ))
+                if [ $dolu2 -gt 30 ]; then dolu2=30; fi
+                local bos2=$(( 30 - dolu2 ))
+                for ((b=0; b<dolu2; b++)); do printf "${G}▓${NC}"; done
+                for ((b=0; b<bos2; b++)); do printf "${W}░${NC}"; done
+                printf "${C}]${NC} ${BOLD}${Y}%2d saniye${NC} ${C}${spin_chars:$spin_idx:1}${NC}" $kalan
+                sleep 0.2
+            done
+        done
+        
+        # Tamamlandı
+        printf "\r  ${C}[${NC}"
+        for ((b=0; b<30; b++)); do printf "${G}▓${NC}"; done
+        printf "${C}]${NC} ${BOLD}${G} Devam!    ${NC}  "
+        echo ""
+        echo ""
+        return
+    fi
+    
+    # Mod 1: Manuel mod - ENTER bekle
     echo -e "${M}╔═════════════════════════════════════════════════════╗${NC}"
     echo -e "${M}║${NC}                                                     ${M}║${NC}"
     echo -ne "${M}║${NC}     "; yaz ">>> Devam etmek için ENTER'a bas <<<" "$BOLD$Y" 0.01; 
@@ -274,6 +355,16 @@ custom_sleep 0.3
 yaz "              [USB Klonlama Sistemi]" "$C" 0.03
 echo ""
 custom_sleep 0.5
+
+# Aktif mod göstergesi
+echo -e "${C}┌──────────────────────────────────────────────┐${NC}"
+case "$OTOMATIK_MOD$HIZLI_MOD" in
+    "00") echo -e "${C}│${NC}  ${BOLD}Aktif Mod:${NC} ${G}Animasyonlu (Manuel)${NC}            ${C}│${NC}" ;;
+    "01") echo -e "${C}│${NC}  ${BOLD}Aktif Mod:${NC} ${Y}Hızlı${NC}                           ${C}│${NC}" ;;
+    "10") echo -e "${C}│${NC}  ${BOLD}Aktif Mod:${NC} ${M}Otomatik (${ADIM_BEKLEME}sn bekleme)${NC}           ${C}│${NC}" ;;
+esac
+echo -e "${C}└──────────────────────────────────────────────┘${NC}"
+echo ""
 
 yildiz_patlat "Hoş Geldin!"
 
@@ -445,6 +536,7 @@ echo -e "${R}╚═════════════════════�
 echo ""
 custom_sleep 1
 
+# GÜVENLİK ONAYI - Bu her modda kullanıcıdan alınmalı
 echo -ne "${Y}Son onay için ${BOLD}${R}EVET${NC}${Y} yaz: ${NC}"
 read ONAY
 
@@ -534,7 +626,7 @@ custom_sleep 1
 echo -e "${C}[●] Transfer başladı... (dd progress aşağıda)${NC}"
 echo ""
 
-# DD işlemi (Bu kısım mecburen bekler çünkü disk yazılıyor)
+# DD işlemi
 dd if=/dev/$HOCA of=/dev/$SENIN bs=4M status=progress conv=fsync
 
 if [ $? -eq 0 ]; then
@@ -550,13 +642,12 @@ if [ $? -eq 0 ]; then
     sync
     basarili "Tüm veriler diske yazıldı, lütfen bekleyin ve asla USB disklerinizi çıkarmayın."
     
- # ==========================================
-    # YENİ EKLENEN GÜVENLİK ADIMI (EJECT)
+    # ==========================================
+    # GÜVENLİK ADIMI (EJECT)
     # ==========================================
     echo ""
     yaz "[🔌] Bekleyin, hedef disk güvenli moda alınıyor..." "$W" 0.03
     
-    # Diski sistemden at (Safely Remove)
     eject /dev/$SENIN 2>/dev/null || umount /dev/$SENIN* 2>/dev/null
     
     basarili "Hedef disk (/dev/$SENIN) sistemden ayrıldı"
@@ -609,9 +700,9 @@ if [ $? -eq 0 ]; then
     custom_sleep 0.5
     
     echo ""
-    echo -e "  \033[0;36m[📦] Klonlama Raporu: Başarılı\033[0m"
-    echo -e "  \033[0;32m[✔] Hedef disk (/dev/$SENIN) şimdi kullanılabilir\033[0m"
-    echo -e "  \033[1;37m[ℹ] Güvenle çıkarabilirsin.\033[0m"
+    echo -e "  ${C}[📦] Klonlama Raporu: Başarılı${NC}"
+    echo -e "  ${G}[✔] Hedef disk (/dev/$SENIN) şimdi kullanılabilir${NC}"
+    echo -e "  ${W}[ℹ] Güvenle çıkarabilirsin.${NC}"
 
     echo ""
     echo -e "${M}┌─────────────────────────────────────────────────────┐${NC}"
