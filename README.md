@@ -82,7 +82,7 @@ Bu araç **`dd`** komutunu kullanır. Bu işlem:
 1. Hedef diskteki **TÜM VERİLERİ SİLİNECEK** ve geri getirilemez olacaktır.
 2. Hedef disk, kaynak diskin **BİREBİR KOPYASI** (Partition tablosu, UUID'ler dahil) olacaktır.
 
-**Bu araç sadece Linux çekirdeğine sahip olan işletim sistemleri için özel olarak hazırlanmıştır.** Eğer e-kilit kurduğunuz bilgisayarın işletim sistemi Windows ise bu araç genellikle çalışmaz. Bunun için **Windows Subsystem for Linux'u** aktive etmeniz gerekebilir. **Windows Subsystem for Linux'u** kurmada karalı iseniz, aşağıdaki dokümantasyon bağlantısında kurma adımları yer almaktadır:
+**Bu araç sadece Linux çekirdeğine sahip olan işletim sistemleri için özel olarak hazırlanmıştır.** Eğer e-kilit kurduğunuz bilgisayarın işletim sistemi Windows ise bu araç genellikle çalışmaz. Bunun için **Windows Subsystem for Linux'u** aktive etmeniz gerekebilir. **Windows Subsystem for Linux'u** kurmada kararlı iseniz, aşağıdaki dokümantasyon bağlantısında kurma adımları yer almaktadır:
 
 https://learn.microsoft.com/en-us/windows/wsl/install
 
@@ -102,4 +102,4 @@ Script açılışta animasyonlu bir arayüz sunar:
 
 Uygulama kodları tamamen yapay zeka tarafından hazırlanmıştır. İnsan tarafından kontrol edilmiştir. Kullandığım yapay zekalar **Gemini** ve **Claude**'dur.
 
-Sevgiyle yapıldı ❤️
+Sevgiyle yapıldı. ❤️
