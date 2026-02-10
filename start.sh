@@ -19,6 +19,17 @@ BLINK='\033[5m'
 BOLD='\033[1m'
 NC='\033[0m'
 
+# Varsayılan Ayarlar
+GUVENLIK_ONAY=1            # 1=EVET yazmak gerekir, 0=atlanır
+DD_BLOCK_SIZE="4M"         # dd bs parametresi
+DD_CONV="fsync"            # dd conv parametresi
+DOGRULAMA_YAP=1            # 1=hash doğrulaması yap, 0=atla
+EJECT_YAP=1                # 1=işlem sonunda diski eject et, 0=etme
+TRANSFER_ONCELIK="normal"  # ionice/nice önceliği: low/normal/high
+LOG_DOSYASI=""             # boş=log tutma, dosya yolu=log tut
+OZEL_DD_PARAM=""           # kullanıcının ek dd parametreleri
+BOYUT_KORUMA=1             # 1=hedef<kaynak ise engelle, 0=zorla devam
+
 # Root kontrolü
 if [ "$EUID" -ne 0 ]; then 
     echo -e "${R}[✗] Bu scripti sudo ile çalıştırmalısın!${NC}"
@@ -32,7 +43,282 @@ if ! command -v awk &> /dev/null; then
 fi
 
 # ========================================
-# MOD SEÇİMİ (3 SEÇENEK)
+# LOG FONKSİYONU
+# ========================================
+log_yaz() {
+    local mesaj="$1"
+    if [ -n "$LOG_DOSYASI" ]; then
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] $mesaj" >> "$LOG_DOSYASI"
+    fi
+}
+
+# ========================================
+# BOYUT FORMATLAMA
+# ========================================
+boyut_formatla() {
+    local bytes=$1
+    if [ "$bytes" -ge 1073741824 ]; then
+        awk "BEGIN {printf \"%.2f GB\", $bytes/1073741824}"
+    elif [ "$bytes" -ge 1048576 ]; then
+        awk "BEGIN {printf \"%.2f MB\", $bytes/1048576}"
+    elif [ "$bytes" -ge 1024 ]; then
+        awk "BEGIN {printf \"%.2f KB\", $bytes/1024}"
+    else
+        echo "${bytes} B"
+    fi
+}
+
+# ========================================
+# AYARLAR MENÜSÜ
+# ========================================
+ayarlar_menusu() {
+    local ayar_devam=1
+    while [ $ayar_devam -eq 1 ]; do
+        clear
+        echo -e "${C}╔══════════════════════════════════════════════════════════╗${NC}"
+        echo -e "${C}║${NC} ${BOLD}${W}                  ⚙  AYARLAR  ⚙${NC}                        ${C}║${NC}"
+        echo -e "${C}╠══════════════════════════════════════════════════════════╣${NC}"
+        echo -e "${C}║${NC}                                                          ${C}║${NC}"
+
+        # 1) Güvenlik onayı
+        if [ "$GUVENLIK_ONAY" -eq 1 ]; then
+            echo -e "${C}║${NC}  ${G}[1]${NC} Güvenlik Onayı (EVET yazma)    : ${G}AÇIK${NC}             ${C}║${NC}"
+        else
+            echo -e "${C}║${NC}  ${G}[1]${NC} Güvenlik Onayı (EVET yazma)    : ${R}KAPALI${NC}           ${C}║${NC}"
+        fi
+
+        # 2) Block Size
+        echo -e "${C}║${NC}  ${G}[2]${NC} DD Block Size (bs)              : ${Y}${DD_BLOCK_SIZE}${NC}               ${C}║${NC}"
+
+        # 3) DD Conv parametresi
+        echo -e "${C}║${NC}  ${G}[3]${NC} DD Conv Parametresi             : ${Y}${DD_CONV}${NC}            ${C}║${NC}"
+
+        # 4) Hash Doğrulama
+        if [ "$DOGRULAMA_YAP" -eq 1 ]; then
+            echo -e "${C}║${NC}  ${G}[4]${NC} Hash Doğrulama (MD5)            : ${G}AÇIK${NC}             ${C}║${NC}"
+        else
+            echo -e "${C}║${NC}  ${G}[4]${NC} Hash Doğrulama (MD5)            : ${R}KAPALI${NC}           ${C}║${NC}"
+        fi
+
+        # 5) Eject
+        if [ "$EJECT_YAP" -eq 1 ]; then
+            echo -e "${C}║${NC}  ${G}[5]${NC} İşlem Sonunda Eject             : ${G}AÇIK${NC}             ${C}║${NC}"
+        else
+            echo -e "${C}║${NC}  ${G}[5]${NC} İşlem Sonunda Eject             : ${R}KAPALI${NC}           ${C}║${NC}"
+        fi
+
+        # 6) Transfer Önceliği
+        case "$TRANSFER_ONCELIK" in
+            low)  ONCELIK_RENK="${C}DÜŞÜK${NC}" ;;
+            high) ONCELIK_RENK="${R}YÜKSEK${NC}" ;;
+            *)    ONCELIK_RENK="${G}NORMAL${NC}" ;;
+        esac
+        echo -e "${C}║${NC}  ${G}[6]${NC} Transfer Önceliği (I/O)         : ${ONCELIK_RENK}            ${C}║${NC}"
+
+        # 7) Log Dosyası
+        if [ -n "$LOG_DOSYASI" ]; then
+            echo -e "${C}║${NC}  ${G}[7]${NC} Log Dosyası                     : ${G}${LOG_DOSYASI}${NC}  ${C}║${NC}"
+        else
+            echo -e "${C}║${NC}  ${G}[7]${NC} Log Dosyası                     : ${R}KAPALI${NC}           ${C}║${NC}"
+        fi
+
+        # 8) Özel DD Parametreleri
+        if [ -n "$OZEL_DD_PARAM" ]; then
+            echo -e "${C}║${NC}  ${G}[8]${NC} Özel DD Parametreleri           : ${Y}${OZEL_DD_PARAM}${NC}  ${C}║${NC}"
+        else
+            echo -e "${C}║${NC}  ${G}[8]${NC} Özel DD Parametreleri           : ${W}yok${NC}              ${C}║${NC}"
+        fi
+
+        # 9) Boyut Koruma
+        if [ "$BOYUT_KORUMA" -eq 1 ]; then
+            echo -e "${C}║${NC}  ${G}[9]${NC} Boyut Koruma (Hedef<Kaynak)     : ${G}AÇIK${NC}             ${C}║${NC}"
+        else
+            echo -e "${C}║${NC}  ${G}[9]${NC} Boyut Koruma (Hedef<Kaynak)     : ${R}KAPALI${NC}           ${C}║${NC}"
+        fi
+
+        echo -e "${C}║${NC}                                                          ${C}║${NC}"
+        echo -e "${C}║${NC}  ${M}[0]${NC} ${BOLD}Kaydet ve Geri Dön${NC}                                  ${C}║${NC}"
+        echo -e "${C}║${NC}                                                          ${C}║${NC}"
+        echo -e "${C}╚══════════════════════════════════════════════════════════╝${NC}"
+        echo ""
+        echo -ne "${Y}Değiştirmek istediğin ayar [0-9]: ${NC}"
+        read -r AYAR_SEC
+
+        case "$AYAR_SEC" in
+            1)
+                if [ "$GUVENLIK_ONAY" -eq 1 ]; then
+                    echo ""
+                    echo -e "${R}╔══════════════════════════════════════════════════╗${NC}"
+                    echo -e "${R}║${NC}  ${BOLD}⚠  DİKKAT: Güvenlik onayını kapatmak${NC}           ${R}║${NC}"
+                    echo -e "${R}║${NC}  ${BOLD}yanlışlıkla veri kaybına neden olabilir!${NC}        ${R}║${NC}"
+                    echo -e "${R}╚══════════════════════════════════════════════════╝${NC}"
+                    echo -ne "${Y}Yine de kapatmak istiyor musun? [e/h]: ${NC}"
+                    read -r ONAYLA
+                    if [[ "$ONAYLA" =~ ^[eE]$ ]]; then
+                        GUVENLIK_ONAY=0
+                        echo -e "${G}[✓] Güvenlik onayı kapatıldı${NC}"
+                    fi
+                else
+                    GUVENLIK_ONAY=1
+                    echo -e "${G}[✓] Güvenlik onayı açıldı${NC}"
+                fi
+                sleep 1
+                ;;
+            2)
+                echo ""
+                echo -e "${C}Mevcut Block Size: ${Y}${DD_BLOCK_SIZE}${NC}"
+                echo -e "${W}Önerilen değerler: 512, 1K, 4K, 64K, 1M, 4M, 8M, 16M, 64M${NC}"
+                echo -e "${C}Küçük bs = daha güvenli ama yavaş${NC}"
+                echo -e "${C}Büyük bs = daha hızlı ama hata riski artar${NC}"
+                echo -ne "${Y}Yeni Block Size: ${NC}"
+                read -r YBS
+                if [ -n "$YBS" ]; then
+                    DD_BLOCK_SIZE="$YBS"
+                    echo -e "${G}[✓] Block Size ayarlandı: ${DD_BLOCK_SIZE}${NC}"
+                fi
+                sleep 1
+                ;;
+            3)
+                echo ""
+                echo -e "${C}Mevcut Conv: ${Y}${DD_CONV}${NC}"
+                echo -e "${W}Seçenekler:${NC}"
+                echo -e "  ${G}fsync${NC}    - Her bloktan sonra fiziksel yazma (güvenli)"
+                echo -e "  ${G}fdatasync${NC} - Sadece veriyi sync et (biraz daha hızlı)"
+                echo -e "  ${G}notrunc${NC}  - Hedefi kırpma"
+                echo -e "  ${G}noerror${NC}  - Hatalarda durma (hasarlı disk için)"
+                echo -e "  ${G}sync${NC}     - Eksik blokları sıfırla"
+                echo -e "${C}Birden fazla: virgülle ayır (örn: fsync,noerror)${NC}"
+                echo -ne "${Y}Yeni Conv parametresi: ${NC}"
+                read -r YCONV
+                if [ -n "$YCONV" ]; then
+                    DD_CONV="$YCONV"
+                    echo -e "${G}[✓] Conv ayarlandı: ${DD_CONV}${NC}"
+                fi
+                sleep 1
+                ;;
+            4)
+                if [ "$DOGRULAMA_YAP" -eq 1 ]; then
+                    DOGRULAMA_YAP=0
+                    echo -e "${Y}[✓] Hash doğrulama kapatıldı (daha hızlı)${NC}"
+                else
+                    DOGRULAMA_YAP=1
+                    echo -e "${G}[✓] Hash doğrulama açıldı (daha güvenli)${NC}"
+                fi
+                sleep 1
+                ;;
+            5)
+                if [ "$EJECT_YAP" -eq 1 ]; then
+                    EJECT_YAP=0
+                    echo -e "${Y}[✓] İşlem sonunda eject yapılmayacak${NC}"
+                else
+                    EJECT_YAP=1
+                    echo -e "${G}[✓] İşlem sonunda disk eject edilecek${NC}"
+                fi
+                sleep 1
+                ;;
+            6)
+                echo ""
+                echo -e "${C}Mevcut Öncelik: ${ONCELIK_RENK}${NC}"
+                echo -e "${W}Seçenekler:${NC}"
+                echo -e "  ${C}[1]${NC} Düşük   - Sistem öncelikli, transfer arka planda"
+                echo -e "  ${G}[2]${NC} Normal  - Dengeli (varsayılan)"
+                echo -e "  ${R}[3]${NC} Yüksek  - Transfer öncelikli, sistem yavaşlayabilir"
+                echo -ne "${Y}Seçim [1/2/3]: ${NC}"
+                read -r ONCELIK_SEC
+                case "$ONCELIK_SEC" in
+                    1) TRANSFER_ONCELIK="low"; echo -e "${G}[✓] Düşük öncelik ayarlandı${NC}" ;;
+                    3) TRANSFER_ONCELIK="high"; echo -e "${G}[✓] Yüksek öncelik ayarlandı${NC}" ;;
+                    *) TRANSFER_ONCELIK="normal"; echo -e "${G}[✓] Normal öncelik ayarlandı${NC}" ;;
+                esac
+                sleep 1
+                ;;
+            7)
+                echo ""
+                if [ -n "$LOG_DOSYASI" ]; then
+                    echo -e "${C}Mevcut log dosyası: ${Y}${LOG_DOSYASI}${NC}"
+                    echo -ne "${Y}Kapatmak için boş bırak, değiştirmek için yol yaz: ${NC}"
+                else
+                    echo -e "${C}Log dosyası şu an kapalı.${NC}"
+                    echo -ne "${Y}Log dosyası yolu (örn: /tmp/flashor.log): ${NC}"
+                fi
+                read -r YLOG
+                if [ -z "$YLOG" ]; then
+                    LOG_DOSYASI=""
+                    echo -e "${Y}[✓] Log kapatıldı${NC}"
+                else
+                    LOG_DOSYASI="$YLOG"
+                    touch "$LOG_DOSYASI" 2>/dev/null
+                    if [ $? -eq 0 ]; then
+                        echo -e "${G}[✓] Log dosyası ayarlandı: ${LOG_DOSYASI}${NC}"
+                    else
+                        echo -e "${R}[✗] Bu dosya yoluna yazılamıyor!${NC}"
+                        LOG_DOSYASI=""
+                    fi
+                fi
+                sleep 1
+                ;;
+            8)
+                echo ""
+                echo -e "${C}Mevcut özel parametreler: ${Y}${OZEL_DD_PARAM:-yok}${NC}"
+                echo -e "${W}dd komutuna eklenecek ek parametreler yazın.${NC}"
+                echo -e "${W}Örnek: iflag=direct oflag=direct${NC}"
+                echo -e "${W}Örnek: count=1000 skip=10${NC}"
+                echo -e "${C}Boş bırakırsan temizlenir.${NC}"
+                echo -ne "${Y}Özel parametreler: ${NC}"
+                read -r YDD
+                OZEL_DD_PARAM="$YDD"
+                if [ -n "$OZEL_DD_PARAM" ]; then
+                    echo -e "${G}[✓] Özel parametreler ayarlandı: ${OZEL_DD_PARAM}${NC}"
+                else
+                    echo -e "${Y}[✓] Özel parametreler temizlendi${NC}"
+                fi
+                sleep 1
+                ;;
+            9)
+                if [ "$BOYUT_KORUMA" -eq 1 ]; then
+                    echo ""
+                    echo -e "${R}╔══════════════════════════════════════════════════════╗${NC}"
+                    echo -e "${R}║                                                      ║${NC}"
+                    echo -e "${R}║${NC}  ${BOLD}⚠  CİDDİ UYARI: Boyut korumasını kapatmak${NC}          ${R}║${NC}"
+                    echo -e "${R}║${NC}  ${BOLD}veri kaybına veya bozuk diske yol açabilir!${NC}         ${R}║${NC}"
+                    echo -e "${R}║                                                      ║${NC}"
+                    echo -e "${R}║${NC}  Kaynak disk hedeften büyükse, hedef diske          ${R}║${NC}"
+                    echo -e "${R}║${NC}  sığmayan veriler ${BOLD}KESİLECEK${NC} ve kaybolacak.         ${R}║${NC}"
+                    echo -e "${R}║${NC}  Disk bölüm tablosu bozulabilir.                    ${R}║${NC}"
+                    echo -e "${R}║                                                      ║${NC}"
+                    echo -e "${R}║${NC}  ${Y}Bu ayar sadece ne yaptığını bilenler içindir!${NC}       ${R}║${NC}"
+                    echo -e "${R}║                                                      ║${NC}"
+                    echo -e "${R}╚══════════════════════════════════════════════════════╝${NC}"
+                    echo ""
+                    echo -ne "${Y}Riski kabul edip kapatmak istiyor musun? [e/h]: ${NC}"
+                    read -r ONAYLA
+                    if [[ "$ONAYLA" =~ ^[eE]$ ]]; then
+                        BOYUT_KORUMA=0
+                        echo -e "${R}[✓] Boyut koruma KAPATILDI - dikkatli ol!${NC}"
+                    else
+                        echo -e "${G}[✓] Boyut koruma açık kaldı${NC}"
+                    fi
+                else
+                    BOYUT_KORUMA=1
+                    echo -e "${G}[✓] Boyut koruma tekrar açıldı${NC}"
+                fi
+                sleep 1
+                ;;
+            0)
+                ayar_devam=0
+                echo -e "${G}[✓] Ayarlar kaydedildi!${NC}"
+                sleep 1
+                ;;
+            *)
+                echo -e "${R}[✗] Geçersiz seçim${NC}"
+                sleep 1
+                ;;
+        esac
+    done
+}
+
+# ========================================
+# MOD SEÇİMİ
 # ========================================
 clear
 echo -e "${C}┌──────────────────────────────────────────────────────┐${NC}"
@@ -49,85 +335,90 @@ echo -e "${C}│${NC}  ${G}[3]${NC}  ${W}Otomatik Mod${NC} ${Y}(Animasyonlu, dur
 echo -e "${C}│${NC}       ${C}Animasyonlar oynar ama ENTER beklemez${NC}         ${C}│${NC}"
 echo -e "${C}│${NC}       ${C}Adımlar arası otomatik geçiş (3sn bekleme)${NC}   ${C}│${NC}"
 echo -e "${C}│${NC}                                                      ${C}│${NC}"
-echo -e "${C}└──────────────────────────────────────────────────────┘${NC}"
-echo ""
-echo -ne "${Y}Seçiminiz [1/2/3]: ${NC}"
-read -r MOD_SECIM
-
-case "$MOD_SECIM" in
-    2)
-        HIZLI_MOD=1
-        OTOMATIK_MOD=0
-        ADIM_BEKLEME=0
-        echo -e "\n${G}[✓] Hızlı mod aktif. Süslemeler atlanıyor...${NC}\n"
-        ;;
-    3)
-        HIZLI_MOD=0
-        OTOMATIK_MOD=1
-        ADIM_BEKLEME=3
-        echo -e "\n${G}[✓] Otomatik mod aktif. Animasyonlar oynar, adımlar otomatik geçer...${NC}"
-        echo -ne "${Y}Adımlar arası bekleme süresi (saniye) [varsayılan=3]: ${NC}"
-        read -r SURE_SECIM
-        if [[ "$SURE_SECIM" =~ ^[0-9]+$ ]] && [ "$SURE_SECIM" -gt 0 ]; then
-            ADIM_BEKLEME=$SURE_SECIM
-        fi
-        echo -e "${C}[ℹ] Adımlar arası bekleme: ${ADIM_BEKLEME} saniye${NC}\n"
-        ;;
-    *)
-        HIZLI_MOD=0
-        OTOMATIK_MOD=0
-        ADIM_BEKLEME=0
-        echo -e "\n${G}[✓] Animasyonlu mod aktif. Her adımda ENTER beklenecek...${NC}\n"
-        ;;
-esac
-
-# ========================================
-# TRANSFER MODU SEÇİMİ
-# ========================================
-clear
-echo -e "${C}┌──────────────────────────────────────────────────────┐${NC}"
-echo -e "${C}│${NC} ${BOLD}${W}        Transfer Modu Seçimi${NC}                          ${C}│${NC}"
-echo -e "${C}├──────────────────────────────────────────────────────┤${NC}"
-echo -e "${C}│${NC}                                                      ${C}│${NC}"
-echo -e "${C}│${NC}  ${G}[1]${NC}  ${W}Tam Klon (dd)${NC}                                  ${C}│${NC}"
-echo -e "${C}│${NC}       ${C}Diskin tamamını birebir kopyalar${NC}               ${C}│${NC}"
-echo -e "${C}│${NC}       ${C}Boş alanlar dahil her şeyi aktarır${NC}            ${C}│${NC}"
-echo -e "${C}│${NC}       ${Y}Daha yavaş ama %100 aynı kopya${NC}                ${C}│${NC}"
-echo -e "${C}│${NC}                                                      ${C}│${NC}"
-echo -e "${C}│${NC}  ${G}[2]${NC}  ${W}UUID Modu (Akıllı Klon)${NC}                         ${C}│${NC}"
-echo -e "${C}│${NC}       ${C}Sadece UUID ve dosyaları kopyalar${NC}              ${C}│${NC}"
-echo -e "${C}│${NC}       ${C}Partition tablosu + dosya sistemi + veriler${NC}    ${C}│${NC}"
-echo -e "${C}│${NC}       ${C}Diskin sadece dolu kısmını aktarır${NC}             ${C}│${NC}"
-echo -e "${C}│${NC}       ${Y}Çok daha hızlı, UUID korunur${NC}                   ${C}│${NC}"
+echo -e "${C}│${NC}  ${M}[A]${NC}  ${W}⚙  Ayarlar${NC}                                    ${C}│${NC}"
+echo -e "${C}│${NC}       ${C}Gelişmiş yapılandırma seçenekleri${NC}             ${C}│${NC}"
 echo -e "${C}│${NC}                                                      ${C}│${NC}"
 echo -e "${C}└──────────────────────────────────────────────────────┘${NC}"
 echo ""
-echo -ne "${Y}Seçiminiz [1/2]: ${NC}"
-read -r TRANSFER_MOD
 
-case "$TRANSFER_MOD" in
-    2)
-        UUID_MOD=1
-        echo -e "\n${G}[✓] UUID Modu aktif. Sadece dolu kısımlar kopyalanacak...${NC}\n"
-        ;;
-    *)
-        UUID_MOD=0
-        echo -e "\n${G}[✓] Tam Klon modu aktif. Disk birebir kopyalanacak...${NC}\n"
-        ;;
-esac
+MOD_SECILDI=0
+while [ $MOD_SECILDI -eq 0 ]; do
+    echo -ne "${Y}Seçiminiz [1/2/3/A]: ${NC}"
+    read -r MOD_SECIM
+
+    case "$MOD_SECIM" in
+        [aA])
+            ayarlar_menusu
+            clear
+            echo -e "${C}┌──────────────────────────────────────────────────────┐${NC}"
+            echo -e "${C}│${NC} ${BOLD}${W}        Çalışma Modu Seçimi${NC}                          ${C}│${NC}"
+            echo -e "${C}├──────────────────────────────────────────────────────┤${NC}"
+            echo -e "${C}│${NC}                                                      ${C}│${NC}"
+            echo -e "${C}│${NC}  ${G}[1]${NC}  ${W}Animasyonlu Mod${NC} ${Y}(Manuel ilerleme)${NC}              ${C}│${NC}"
+            echo -e "${C}│${NC}       ${C}Her adımda ENTER'a basarak ilerlersin${NC}         ${C}│${NC}"
+            echo -e "${C}│${NC}                                                      ${C}│${NC}"
+            echo -e "${C}│${NC}  ${G}[2]${NC}  ${W}Hızlı Mod${NC} ${Y}(Animasyon yok)${NC}                     ${C}│${NC}"
+            echo -e "${C}│${NC}       ${C}Tüm süslemeler atlanır, sadece iş yapılır${NC}    ${C}│${NC}"
+            echo -e "${C}│${NC}                                                      ${C}│${NC}"
+            echo -e "${C}│${NC}  ${G}[3]${NC}  ${W}Otomatik Mod${NC} ${Y}(Animasyonlu, durmadan)${NC}          ${C}│${NC}"
+            echo -e "${C}│${NC}       ${C}Animasyonlar oynar ama ENTER beklemez${NC}         ${C}│${NC}"
+            echo -e "${C}│${NC}       ${C}Adımlar arası otomatik geçiş (3sn bekleme)${NC}   ${C}│${NC}"
+            echo -e "${C}│${NC}                                                      ${C}│${NC}"
+            echo -e "${C}│${NC}  ${M}[A]${NC}  ${W}⚙  Ayarlar${NC}                                    ${C}│${NC}"
+            echo -e "${C}│${NC}       ${C}Gelişmiş yapılandırma seçenekleri${NC}             ${C}│${NC}"
+            echo -e "${C}│${NC}                                                      ${C}│${NC}"
+            echo -e "${C}└──────────────────────────────────────────────────────┘${NC}"
+            echo ""
+            echo -e "${G}[✓] Ayarlar güncellendi!${NC}"
+            echo ""
+            ;;
+        2)
+            HIZLI_MOD=1
+            OTOMATIK_MOD=0
+            ADIM_BEKLEME=0
+            echo -e "\n${G}[✓] Hızlı mod aktif. Süslemeler atlanıyor...${NC}\n"
+            MOD_SECILDI=1
+            ;;
+        3)
+            HIZLI_MOD=0
+            OTOMATIK_MOD=1
+            ADIM_BEKLEME=3
+            echo -e "\n${G}[✓] Otomatik mod aktif. Animasyonlar oynar, adımlar otomatik geçer...${NC}"
+            echo -ne "${Y}Adımlar arası bekleme süresi (saniye) [varsayılan=3]: ${NC}"
+            read -r SURE_SECIM
+            if [[ "$SURE_SECIM" =~ ^[0-9]+$ ]] && [ "$SURE_SECIM" -gt 0 ]; then
+                ADIM_BEKLEME=$SURE_SECIM
+            fi
+            echo -e "${C}[ℹ] Adımlar arası bekleme: ${ADIM_BEKLEME} saniye${NC}\n"
+            MOD_SECILDI=1
+            ;;
+        *)
+            HIZLI_MOD=0
+            OTOMATIK_MOD=0
+            ADIM_BEKLEME=0
+            echo -e "\n${G}[✓] Animasyonlu mod aktif. Her adımda ENTER beklenecek...${NC}\n"
+            MOD_SECILDI=1
+            ;;
+    esac
+done
+
+# Log başlat
+log_yaz "========================================="
+log_yaz "FLASHOR başlatıldı"
+log_yaz "Mod: HIZLI=$HIZLI_MOD OTOMATIK=$OTOMATIK_MOD"
+log_yaz "Ayarlar: BS=$DD_BLOCK_SIZE CONV=$DD_CONV DOGRULAMA=$DOGRULAMA_YAP EJECT=$EJECT_YAP ONCELIK=$TRANSFER_ONCELIK BOYUT_KORUMA=$BOYUT_KORUMA"
+log_yaz "Özel DD param: $OZEL_DD_PARAM"
 
 # ========================================
 # YARDIMCI FONKSİYONLAR
 # ========================================
 
-# Akıllı Sleep
 custom_sleep() {
     if [ "$HIZLI_MOD" -eq 0 ]; then
         sleep "$1"
     fi
 }
 
-# Yazma Animasyonu
 yaz() {
     local text="$1"
     local color="${2:-$NC}"
@@ -146,7 +437,6 @@ yaz() {
     echo -e "${NC}"
 }
 
-# Progress Bar
 progress_bar() {
     local duration=$1
     local text="$2"
@@ -182,7 +472,6 @@ progress_bar() {
     echo ""
 }
 
-# Yıldız Patlaması
 yildiz_patlat() {
     local text="$1"
     
@@ -207,7 +496,6 @@ yildiz_patlat() {
     yaz "  ${text}" "$W" 0.02
 }
 
-# Nokta nokta bekleme
 bekle() {
     if [ "$HIZLI_MOD" -eq 1 ]; then return; fi
 
@@ -222,7 +510,6 @@ bekle() {
     echo ""
 }
 
-# Scan Animasyonu
 scan_anim() {
     local items=("$@")
     for item in "${items[@]}"; do
@@ -238,19 +525,14 @@ scan_anim() {
     done
 }
 
-# =====================================================
-# ADIM İLERLETME - MOD'A GÖRE DAVRANIŞI DEĞİŞİR
-# =====================================================
 ileri() {
     echo ""
     
-    # Mod 2: Hızlı mod - hiç bekleme yok
     if [ "$HIZLI_MOD" -eq 1 ]; then
         echo -e "${G}[→] Sonraki adıma geçiliyor...${NC}"
         return
     fi
     
-    # Mod 3: Otomatik mod - animasyonlu geri sayım, ENTER gerektirmez
     if [ "$OTOMATIK_MOD" -eq 1 ]; then
         echo -e "${M}╔═════════════════════════════════════════════════════╗${NC}"
         echo -e "${M}║${NC}                                                     ${M}║${NC}"
@@ -289,7 +571,6 @@ ileri() {
         return
     fi
     
-    # Mod 1: Manuel mod - ENTER bekle
     echo -e "${M}╔═════════════════════════════════════════════════════╗${NC}"
     echo -e "${M}║${NC}                                                     ${M}║${NC}"
     echo -ne "${M}║${NC}     "; yaz ">>> Devam etmek için ENTER'a bas <<<" "$BOLD$Y" 0.01; 
@@ -298,7 +579,6 @@ ileri() {
     read -r
 }
 
-# Başarı Animasyonu
 basarili() {
     if [ "$HIZLI_MOD" -eq 1 ]; then
         echo -e "${G}[✔]${NC} $1"
@@ -311,7 +591,6 @@ basarili() {
     sleep 0.2
 }
 
-# Yükleme Çemberi
 yukleme_cemberi() {
     local duration=$1
     local text="$2"
@@ -334,7 +613,6 @@ yukleme_cemberi() {
     echo ""
 }
 
-# Matrix Rain Efekti
 matrix_rain() {
     if [ "$HIZLI_MOD" -eq 1 ]; then return; fi
     local lines=5
@@ -388,19 +666,30 @@ yaz "              [USB Klonlama Sistemi]" "$C" 0.03
 echo ""
 custom_sleep 0.5
 
-# Aktif mod göstergesi
-echo -e "${C}┌──────────────────────────────────────────────┐${NC}"
+# Aktif mod ve ayar göstergesi
+echo -e "${C}┌──────────────────────────────────────────────────┐${NC}"
 case "$OTOMATIK_MOD$HIZLI_MOD" in
-    "00") echo -e "${C}│${NC}  ${BOLD}Aktif Mod:${NC} ${G}Animasyonlu (Manuel)${NC}            ${C}│${NC}" ;;
-    "01") echo -e "${C}│${NC}  ${BOLD}Aktif Mod:${NC} ${Y}Hızlı${NC}                           ${C}│${NC}" ;;
-    "10") echo -e "${C}│${NC}  ${BOLD}Aktif Mod:${NC} ${M}Otomatik (${ADIM_BEKLEME}sn bekleme)${NC}           ${C}│${NC}" ;;
+    "00") echo -e "${C}│${NC}  ${BOLD}Aktif Mod :${NC} ${G}Animasyonlu (Manuel)${NC}            ${C}│${NC}" ;;
+    "01") echo -e "${C}│${NC}  ${BOLD}Aktif Mod :${NC} ${Y}Hızlı${NC}                           ${C}│${NC}" ;;
+    "10") echo -e "${C}│${NC}  ${BOLD}Aktif Mod :${NC} ${M}Otomatik (${ADIM_BEKLEME}sn bekleme)${NC}           ${C}│${NC}" ;;
 esac
-if [ "$UUID_MOD" -eq 1 ]; then
-    echo -e "${C}│${NC}  ${BOLD}Transfer :${NC} ${B}UUID Modu (Akıllı Klon)${NC}          ${C}│${NC}"
-else
-    echo -e "${C}│${NC}  ${BOLD}Transfer :${NC} ${G}Tam Klon (dd)${NC}                   ${C}│${NC}"
+echo -e "${C}│${NC}  ${BOLD}Block Size:${NC} ${Y}${DD_BLOCK_SIZE}${NC}  ${BOLD}Conv:${NC} ${Y}${DD_CONV}${NC}              ${C}│${NC}"
+if [ "$GUVENLIK_ONAY" -eq 0 ]; then
+    echo -e "${C}│${NC}  ${BOLD}Güvenlik  :${NC} ${R}KAPALI${NC}                              ${C}│${NC}"
 fi
-echo -e "${C}└──────────────────────────────────────────────┘${NC}"
+if [ "$BOYUT_KORUMA" -eq 0 ]; then
+    echo -e "${C}│${NC}  ${BOLD}Boyut Kor.:${NC} ${R}KAPALI (riskli)${NC}                     ${C}│${NC}"
+fi
+if [ "$DOGRULAMA_YAP" -eq 1 ]; then
+    echo -e "${C}│${NC}  ${BOLD}Doğrulama :${NC} ${G}MD5 Hash Aktif${NC}                      ${C}│${NC}"
+fi
+if [ -n "$OZEL_DD_PARAM" ]; then
+    echo -e "${C}│${NC}  ${BOLD}Özel Param:${NC} ${Y}${OZEL_DD_PARAM}${NC}                    ${C}│${NC}"
+fi
+if [ -n "$LOG_DOSYASI" ]; then
+    echo -e "${C}│${NC}  ${BOLD}Log       :${NC} ${G}${LOG_DOSYASI}${NC}                      ${C}│${NC}"
+fi
+echo -e "${C}└──────────────────────────────────────────────────┘${NC}"
 echo ""
 
 yildiz_patlat "Hoş Geldin!"
@@ -426,11 +715,7 @@ yaz "[⚙]  Sistem bileşenleri taranıyor..." "$W"
 echo ""
 custom_sleep 1
 
-if [ "$UUID_MOD" -eq 1 ]; then
-    scan_anim "Kernel Modülleri" "Disk Araçları" "I/O Sistemleri" "Buffer Yöneticisi" "Partition Araçları" "UUID Yöneticisi" "Dosya Sistemi Araçları"
-else
-    scan_anim "Kernel Modülleri" "Disk Araçları" "I/O Sistemleri" "Buffer Yöneticisi"
-fi
+scan_anim "Kernel Modülleri" "Disk Araçları" "I/O Sistemleri" "Buffer Yöneticisi"
 
 echo ""
 progress_bar 2 "[●] Araç uyumluluğu test ediliyor"
@@ -438,58 +723,40 @@ echo ""
 
 if ! command -v lsblk &> /dev/null; then
     echo -e "${R}[✗] HATA: lsblk bulunamadı!${NC}"
+    log_yaz "HATA: lsblk bulunamadı"
     exit 1
 fi
 basarili "lsblk modülü aktif"
 
 if ! command -v dd &> /dev/null; then
     echo -e "${R}[✗] HATA: dd bulunamadı!${NC}"
+    log_yaz "HATA: dd bulunamadı"
     exit 1
 fi
 basarili "dd transfer motoru hazır"
 basarili "Hesaplama motoru çevrimiçi"
 
-# UUID modu için ek araç kontrolleri
-if [ "$UUID_MOD" -eq 1 ]; then
-    # sfdisk kontrolü
-    if ! command -v sfdisk &> /dev/null; then
-        echo -e "${Y}[!] sfdisk yükleniyor...${NC}"
-        apt-get install -y fdisk &> /dev/null || yum install -y util-linux &> /dev/null
-    fi
-    if command -v sfdisk &> /dev/null; then
-        basarili "sfdisk (partition tablosu) hazır"
+# Doğrulama aracı kontrolü
+if [ "$DOGRULAMA_YAP" -eq 1 ]; then
+    if command -v md5sum &> /dev/null; then
+        basarili "MD5 doğrulama motoru hazır"
     else
-        echo -e "${R}[✗] HATA: sfdisk bulunamadı! UUID modu için gerekli.${NC}"
-        exit 1
+        echo -e "${Y}[!] md5sum bulunamadı, doğrulama devre dışı bırakıldı${NC}"
+        DOGRULAMA_YAP=0
     fi
-
-    # mkfs araçları kontrolü
-    if command -v mkfs.vfat &> /dev/null || command -v mkfs.ext4 &> /dev/null || command -v mkfs.ntfs &> /dev/null; then
-        basarili "Dosya sistemi oluşturma araçları hazır"
-    else
-        echo -e "${Y}[!] Dosya sistemi araçları yükleniyor...${NC}"
-        apt-get install -y dosfstools e2fsprogs ntfs-3g &> /dev/null || yum install -y dosfstools e2fsprogs ntfs-3g &> /dev/null
-    fi
-
-    # rsync veya cp kontrolü
-    if command -v rsync &> /dev/null; then
-        KOPYA_ARACI="rsync"
-        basarili "rsync dosya transfer motoru hazır"
-    else
-        KOPYA_ARACI="cp"
-        basarili "cp dosya transfer motoru hazır"
-    fi
-
-    # blkid kontrolü
-    if ! command -v blkid &> /dev/null; then
-        echo -e "${R}[✗] HATA: blkid bulunamadı!${NC}"
-        exit 1
-    fi
-    basarili "blkid UUID okuyucu hazır"
-
-    # tune2fs / fatlabel / ntfslabel kontrolü
-    basarili "UUID/Label yazma araçları kontrol edildi"
 fi
+
+# ionice kontrolü
+if [ "$TRANSFER_ONCELIK" != "normal" ]; then
+    if command -v ionice &> /dev/null; then
+        basarili "I/O önceliklendirme motoru hazır"
+    else
+        echo -e "${Y}[!] ionice bulunamadı, öncelik normal olarak ayarlandı${NC}"
+        TRANSFER_ONCELIK="normal"
+    fi
+fi
+
+log_yaz "Sistem kontrolü tamamlandı"
 
 echo ""
 yukleme_cemberi 2 "[✓] Son kontroller yapılıyor"
@@ -547,18 +814,23 @@ SENIN=$(lsblk -ndo NAME,TYPE | grep 'disk' | grep -v "^$OS_DISK " | sed -n "${HE
 
 if [ -z "$HOCA" ] || [ -z "$SENIN" ]; then
     echo -e "${R}[✗] HATA: Geçersiz seçim!${NC}"
+    log_yaz "HATA: Geçersiz disk seçimi K=$KAYNAK_NO H=$HEDEF_NO"
     exit 1
 fi
 
 if [ "$HOCA" == "$SENIN" ]; then
     echo -e "${R}[✗] HATA: Kaynak ve hedef aynı olamaz!${NC}"
+    log_yaz "HATA: Kaynak ve hedef aynı: $HOCA"
     exit 1
 fi
 
 if [ "$HOCA" == "$OS_DISK" ] || [ "$SENIN" == "$OS_DISK" ]; then
     echo -e "${R}[✗] HATA: OS diskini seçemezsin!${NC}"
+    log_yaz "HATA: OS diski seçildi"
     exit 1
 fi
+
+log_yaz "Disk seçimi: Kaynak=/dev/$HOCA Hedef=/dev/$SENIN"
 
 echo ""
 yukleme_cemberi 2 "[◆] Seçimler doğrulanıyor"
@@ -569,46 +841,77 @@ echo ""
 basarili "Kaynak tespit edildi: /dev/$HOCA"
 basarili "Hedef kilitlendi: /dev/$SENIN"
 
-# UUID modunda kaynak disk bilgilerini göster
-if [ "$UUID_MOD" -eq 1 ]; then
-    echo ""
-    echo -e "${C}┌─────────────────────────────────────────────────────┐${NC}"
-    echo -e "${C}│${NC} ${BOLD}${W}Kaynak Disk Partition Bilgileri:${NC}                   ${C}│${NC}"
-    echo -e "${C}└─────────────────────────────────────────────────────┘${NC}"
-    echo ""
-    
-    # Kaynak disk partition'larını listele
-    KAYNAK_PARTLAR=$(lsblk -nlo NAME,SIZE,FSTYPE,LABEL,UUID /dev/$HOCA | tail -n +2)
-    if [ -z "$KAYNAK_PARTLAR" ]; then
-        echo -e "${Y}[ℹ] Kaynak diskte partition bulunamadı. Disk düz formatlı olabilir.${NC}"
-        # Düz disk kontrolü (partition tablosu olmadan doğrudan formatlanmış)
-        KAYNAK_FSTYPE=$(blkid -s TYPE -o value /dev/$HOCA 2>/dev/null)
-        KAYNAK_UUID_DISK=$(blkid -s UUID -o value /dev/$HOCA 2>/dev/null)
-        if [ -n "$KAYNAK_FSTYPE" ]; then
-            echo -e "  ${C}Dosya Sistemi:${NC} ${G}$KAYNAK_FSTYPE${NC}"
-            echo -e "  ${C}UUID         :${NC} ${G}$KAYNAK_UUID_DISK${NC}"
+# Disk boyutları
+KAYNAK_BOYUT=$(lsblk -bdno SIZE /dev/$HOCA 2>/dev/null)
+HEDEF_BOYUT=$(lsblk -bdno SIZE /dev/$SENIN 2>/dev/null)
+KAYNAK_BOYUT_HR=$(boyut_formatla "$KAYNAK_BOYUT")
+HEDEF_BOYUT_HR=$(boyut_formatla "$HEDEF_BOYUT")
+
+echo ""
+echo -e "  ${C}Kaynak boyut:${NC} ${G}${KAYNAK_BOYUT_HR}${NC}  (/dev/$HOCA)"
+echo -e "  ${C}Hedef boyut :${NC} ${G}${HEDEF_BOYUT_HR}${NC}  (/dev/$SENIN)"
+
+# ========================================
+# BOYUT KONTROLÜ
+# ========================================
+if [ -n "$KAYNAK_BOYUT" ] && [ -n "$HEDEF_BOYUT" ]; then
+    if [ "$HEDEF_BOYUT" -lt "$KAYNAK_BOYUT" ]; then
+        FARK_BYTE=$((KAYNAK_BOYUT - HEDEF_BOYUT))
+        FARK_HR=$(boyut_formatla "$FARK_BYTE")
+        
+        echo ""
+        echo -e "${R}╔════════════════════════════════════════════════════════╗${NC}"
+        echo -e "${R}║                                                        ║${NC}"
+        echo -e "${R}║${NC}  ${BLINK}${BOLD}⚠  BOYUT UYUMSUZLUĞU TESPİT EDİLDİ ⚠${NC}                ${R}║${NC}"
+        echo -e "${R}║                                                        ║${NC}"
+        echo -e "${R}║${NC}  Kaynak disk hedef diskten ${BOLD}BÜYÜK!${NC}                      ${R}║${NC}"
+        echo -e "${R}║                                                        ║${NC}"
+        echo -e "${R}║${NC}  Kaynak : ${G}${KAYNAK_BOYUT_HR}${NC}                                  ${R}║${NC}"
+        echo -e "${R}║${NC}  Hedef  : ${Y}${HEDEF_BOYUT_HR}${NC}                                  ${R}║${NC}"
+        echo -e "${R}║${NC}  Fark   : ${R}${FARK_HR}${NC} sığmayacak                         ${R}║${NC}"
+        echo -e "${R}║                                                        ║${NC}"
+        echo -e "${R}╚════════════════════════════════════════════════════════╝${NC}"
+        
+        log_yaz "BOYUT UYUMSUZLUĞU: Kaynak=$KAYNAK_BOYUT_HR Hedef=$HEDEF_BOYUT_HR Fark=$FARK_HR"
+        
+        if [ "$BOYUT_KORUMA" -eq 1 ]; then
+            echo ""
+            echo -e "${R}[✗] Hedef disk kaynaktan küçük olduğu için işlem iptal edildi.${NC}"
+            echo -e "${Y}[ℹ] Veriler sığmaz, bozuk kopya oluşur.${NC}"
+            echo -e "${C}[ℹ] Bu kontrolü kapatmak için Ayarlar > [9] Boyut Koruma${NC}"
+            echo ""
+            log_yaz "İşlem iptal edildi: Boyut koruma aktif, hedef < kaynak"
+            exit 1
+        else
+            echo ""
+            echo -e "${R}╔════════════════════════════════════════════════════════╗${NC}"
+            echo -e "${R}║${NC}  ${BOLD}BOYUT KORUMA KAPALI${NC} - Riskli mod aktif!                ${R}║${NC}"
+            echo -e "${R}║                                                        ║${NC}"
+            echo -e "${R}║${NC}  Kaynak hedeften büyük ama yine de devam edilecek.     ${R}║${NC}"
+            echo -e "${R}║${NC}  Son ${BOLD}${FARK_HR}${NC} veri ${BOLD}KESİLECEK${NC} ve kaybolacak!            ${R}║${NC}"
+            echo -e "${R}║${NC}  Bölüm tablosu ve dosya sistemi ${BOLD}BOZULABİLİR!${NC}          ${R}║${NC}"
+            echo -e "${R}╚════════════════════════════════════════════════════════╝${NC}"
+            echo ""
+            echo -ne "${Y}Bu riski kabul ediyor musun? [e/h]: ${NC}"
+            read -r BOYUT_RISK_ONAY
+            if [[ ! "$BOYUT_RISK_ONAY" =~ ^[eE]$ ]]; then
+                echo -e "${G}[ℹ] Akıllıca karar. İşlem iptal edildi.${NC}"
+                log_yaz "İşlem iptal edildi: Kullanıcı boyut riskini kabul etmedi"
+                exit 0
+            fi
+            echo -e "${R}[!] Risk kabul edildi. Eksik veriyle devam ediliyor...${NC}"
+            log_yaz "UYARI: Kullanıcı boyut riskini kabul etti, devam ediliyor"
         fi
     else
-        echo "$KAYNAK_PARTLAR" | while read line; do
-            PNAME=$(echo "$line" | awk '{print $1}')
-            PSIZE=$(echo "$line" | awk '{print $2}')
-            PFSTYPE=$(echo "$line" | awk '{print $3}')
-            PLABEL=$(echo "$line" | awk '{print $4}')
-            PUUID=$(echo "$line" | awk '{print $5}')
-            echo -e "  ${W}$PNAME${NC} | Boyut: ${G}$PSIZE${NC} | FS: ${C}${PFSTYPE:-bilinmiyor}${NC} | Label: ${Y}${PLABEL:-yok}${NC} | UUID: ${M}${PUUID:-yok}${NC}"
-        done
+        echo ""
+        echo -e "  ${G}[✔] Hedef disk yeterli boyutta${NC}"
+        if [ "$HEDEF_BOYUT" -gt "$KAYNAK_BOYUT" ]; then
+            FAZLA_BYTE=$((HEDEF_BOYUT - KAYNAK_BOYUT))
+            FAZLA_HR=$(boyut_formatla "$FAZLA_BYTE")
+            echo -e "  ${C}[ℹ] Hedefte ${FAZLA_HR} fazla alan kalacak${NC}"
+        fi
+        log_yaz "Boyut kontrolü başarılı: Kaynak=$KAYNAK_BOYUT_HR Hedef=$HEDEF_BOYUT_HR"
     fi
-    echo ""
-    
-    # Kaynak disk kullanılan alan hesaplama
-    KAYNAK_BOYUT=$(lsblk -bdno SIZE /dev/$HOCA)
-    KAYNAK_BOYUT_MB=$((KAYNAK_BOYUT / 1024 / 1024))
-    HEDEF_BOYUT=$(lsblk -bdno SIZE /dev/$SENIN)
-    HEDEF_BOYUT_MB=$((HEDEF_BOYUT / 1024 / 1024))
-    
-    echo -e "  ${C}Kaynak disk toplam:${NC} ${G}${KAYNAK_BOYUT_MB} MB${NC}"
-    echo -e "  ${C}Hedef disk toplam :${NC} ${G}${HEDEF_BOYUT_MB} MB${NC}"
-    echo ""
 fi
 
 yildiz_patlat "Hedefler belirlendi!"
@@ -634,17 +937,34 @@ echo -e "${C}│${NC} ${BOLD}${W}Transfer Matrisi:${NC}                         
 echo -e "${C}└─────────────────────────────────────────────────────┘${NC}"
 custom_sleep 0.3
 echo ""
-echo -e "  ${C}Kaynak Cihaz :${NC} ${G}/dev/$HOCA${NC}"
+echo -e "  ${C}Kaynak Cihaz  :${NC} ${G}/dev/$HOCA${NC} (${KAYNAK_BOYUT_HR})"
 custom_sleep 0.3
-echo -e "  ${C}Hedef Cihaz  :${NC} ${R}/dev/$SENIN${NC}"
+echo -e "  ${C}Hedef Cihaz   :${NC} ${R}/dev/$SENIN${NC} (${HEDEF_BOYUT_HR})"
 custom_sleep 0.3
-if [ "$UUID_MOD" -eq 1 ]; then
-    echo -e "  ${C}Transfer Modu:${NC} ${B}UUID Modu (Akıllı Klon)${NC}"
-    echo -e "  ${C}Yöntem       :${NC} ${Y}Partition tablosu + Dosya sistemi + Dosyalar + UUID${NC}"
+echo -e "  ${C}Block Size    :${NC} ${Y}${DD_BLOCK_SIZE}${NC}"
+echo -e "  ${C}Conv          :${NC} ${Y}${DD_CONV}${NC}"
+echo -e "  ${C}I/O Önceliği  :${NC} ${Y}${TRANSFER_ONCELIK}${NC}"
+if [ -n "$OZEL_DD_PARAM" ]; then
+    echo -e "  ${C}Özel Param    :${NC} ${Y}${OZEL_DD_PARAM}${NC}"
+fi
+if [ "$DOGRULAMA_YAP" -eq 1 ]; then
+    echo -e "  ${C}Doğrulama     :${NC} ${G}MD5 Hash (aktif)${NC}"
 else
-    echo -e "  ${C}Transfer Modu:${NC} ${G}Tam Klon (dd birebir)${NC}"
+    echo -e "  ${C}Doğrulama     :${NC} ${Y}Kapalı${NC}"
 fi
 custom_sleep 0.5
+echo ""
+
+# DD komut önizleme
+DD_CMD="dd if=/dev/$HOCA of=/dev/$SENIN bs=$DD_BLOCK_SIZE status=progress conv=$DD_CONV"
+if [ -n "$OZEL_DD_PARAM" ]; then
+    DD_CMD="$DD_CMD $OZEL_DD_PARAM"
+fi
+
+echo -e "${C}┌─────────────────────────────────────────────────────┐${NC}"
+echo -e "${C}│${NC} ${BOLD}${W}Çalışacak DD Komutu:${NC}                               ${C}│${NC}"
+echo -e "${C}└─────────────────────────────────────────────────────┘${NC}"
+echo -e "  ${W}$DD_CMD${NC}"
 echo ""
 
 if [ "$HIZLI_MOD" -eq 0 ]; then
@@ -668,23 +988,29 @@ echo -e "${R}╚═════════════════════�
 echo ""
 custom_sleep 1
 
-# GÜVENLİK ONAYI - Bu her modda kullanıcıdan alınmalı
-echo -ne "${Y}Son onay için ${BOLD}${R}EVET${NC}${Y} yaz: ${NC}"
-read ONAY
+# GÜVENLİK ONAYI
+if [ "$GUVENLIK_ONAY" -eq 1 ]; then
+    echo -ne "${Y}Son onay için ${BOLD}${R}EVET${NC}${Y} yaz: ${NC}"
+    read ONAY
 
-if [ "$ONAY" != "EVET" ]; then
+    if [ "$ONAY" != "EVET" ]; then
+        echo ""
+        yaz "[ℹ] Operasyon kullanıcı tarafından iptal edildi." "$R"
+        log_yaz "Operasyon kullanıcı tarafından iptal edildi"
+        custom_sleep 1
+        echo -e "${C}Güvenli çıkış yapılıyor...${NC}"
+        bekle 1 10
+        exit 0
+    fi
     echo ""
-    yaz "[ℹ] Operasyon kullanıcı tarafından iptal edildi." "$R"
-    custom_sleep 1
-    echo -e "${C}Güvenli çıkış yapılıyor...${NC}"
-    bekle 1 10
-    exit 0
+    basarili "Güvenlik onayı alındı"
+    log_yaz "Güvenlik onayı alındı"
+else
+    echo -e "${Y}[!] Güvenlik onayı devre dışı - otomatik devam ediliyor${NC}"
+    log_yaz "Güvenlik onayı atlandı (ayarlardan kapalı)"
 fi
 
-echo ""
-basarili "Güvenlik onayı alındı"
 custom_sleep 0.5
-
 yukleme_cemberi 2 "[◆] Güvenlik protokolleri işleniyor"
 progress_bar 2 "[●] Yetkilendirme tamamlanıyor"
 yildiz_patlat "Yetkilendirme başarılı!"
@@ -710,10 +1036,9 @@ echo ""
 
 yukleme_cemberi 2 "[◆] Mount noktaları kapatılıyor"
 
-# Hem kaynak hem hedef unmount
 umount /dev/${SENIN}* 2>/dev/null
-umount /dev/${HOCA}* 2>/dev/null
 basarili "Tüm mount noktaları kaldırıldı"
+log_yaz "Mount noktaları kaldırıldı: /dev/$SENIN"
 
 echo ""
 progress_bar 2 "[●] Disk buffer temizleniyor"
@@ -729,41 +1054,13 @@ echo ""
 yukleme_cemberi 1 "[◆] DMA kanalları açılıyor"
 basarili "DMA transfer modu aktif"
 
-# UUID modu için ek hazırlık
-if [ "$UUID_MOD" -eq 1 ]; then
+# Transfer önceliği bilgisi
+if [ "$TRANSFER_ONCELIK" != "normal" ]; then
     echo ""
-    progress_bar 2 "[●] UUID modu için ek hazırlıklar yapılıyor"
-    echo ""
-    
-    # Geçici mount dizinleri oluştur
-    UUID_KAYNAK_MNT=$(mktemp -d /tmp/flashor_kaynak_XXXXXX)
-    UUID_HEDEF_MNT=$(mktemp -d /tmp/flashor_hedef_XXXXXX)
-    
-    basarili "Geçici mount dizinleri oluşturuldu"
-    basarili "Kaynak: $UUID_KAYNAK_MNT"
-    basarili "Hedef : $UUID_HEDEF_MNT"
-    
-    # Kaynak disk partition bilgilerini topla
-    yukleme_cemberi 2 "[◆] Kaynak disk partition haritası çıkarılıyor"
-    
-    # Partition tablosu var mı kontrol et
-    PART_TABLE_TYPE=$(blkid -p -s PTTYPE -o value /dev/$HOCA 2>/dev/null)
-    
-    if [ -n "$PART_TABLE_TYPE" ]; then
-        basarili "Partition tablosu bulundu: $PART_TABLE_TYPE"
-        HAS_PARTITION_TABLE=1
-    else
-        # Doğrudan formatlı disk olabilir
-        DIRECT_FSTYPE=$(blkid -s TYPE -o value /dev/$HOCA 2>/dev/null)
-        if [ -n "$DIRECT_FSTYPE" ]; then
-            basarili "Partition tablosu yok, doğrudan formatlanmış disk: $DIRECT_FSTYPE"
-            HAS_PARTITION_TABLE=0
-        else
-            echo -e "${R}[✗] HATA: Kaynak diskte dosya sistemi bulunamadı!${NC}"
-            rmdir "$UUID_KAYNAK_MNT" "$UUID_HEDEF_MNT" 2>/dev/null
-            exit 1
-        fi
-    fi
+    case "$TRANSFER_ONCELIK" in
+        low)  basarili "I/O önceliği: DÜŞÜK (sistem performansı korunur)" ;;
+        high) basarili "I/O önceliği: YÜKSEK (maksimum transfer hızı)" ;;
+    esac
 fi
 
 echo ""
@@ -781,619 +1078,109 @@ echo -e "${G}╚═════════════════════�
 echo ""
 custom_sleep 0.5
 
-if [ "$UUID_MOD" -eq 1 ]; then
-    # ========================================
-    # UUID MODU FLAŞLAMA
-    # ========================================
-    yaz "[🚀] UUID Modu - Akıllı transfer başlatılıyor..." "$W"
-    bekle 2 20
+yaz "[🚀] Transfer motoru çalıştırılıyor..." "$W"
+bekle 2 20
+echo ""
+
+yukleme_cemberi 3 "[◆] Veri transferi başlatılıyor"
+echo ""
+
+echo -e "${M}┌─────────────────────────────────────────────────────┐${NC}"
+echo -e "${M}│${NC} ${BOLD}${W}Gerçek Zamanlı Transfer İzleme:${NC}                   ${M}│${NC}"
+echo -e "${M}└─────────────────────────────────────────────────────┘${NC}"
+echo ""
+
+echo -e "${C}[ℹ] Komut: ${W}${DD_CMD}${NC}"
+echo ""
+custom_sleep 1
+
+echo -e "${C}[●] Transfer başladı... (dd progress aşağıda)${NC}"
+echo ""
+
+log_yaz "Transfer başladı: $DD_CMD"
+BASLANGIC_ZAMANI=$(date +%s)
+
+# DD Komutu - Öncelik ayarına göre çalıştır
+case "$TRANSFER_ONCELIK" in
+    low)
+        ionice -c 3 nice -n 19 dd if=/dev/$HOCA of=/dev/$SENIN bs=$DD_BLOCK_SIZE status=progress conv=$DD_CONV $OZEL_DD_PARAM
+        DD_SONUC=$?
+        ;;
+    high)
+        ionice -c 1 -n 0 nice -n -20 dd if=/dev/$HOCA of=/dev/$SENIN bs=$DD_BLOCK_SIZE status=progress conv=$DD_CONV $OZEL_DD_PARAM
+        DD_SONUC=$?
+        ;;
+    *)
+        dd if=/dev/$HOCA of=/dev/$SENIN bs=$DD_BLOCK_SIZE status=progress conv=$DD_CONV $OZEL_DD_PARAM
+        DD_SONUC=$?
+        ;;
+esac
+
+BITIS_ZAMANI=$(date +%s)
+GECEN_SURE=$((BITIS_ZAMANI - BASLANGIC_ZAMANI))
+GECEN_DAKIKA=$((GECEN_SURE / 60))
+GECEN_SANIYE=$((GECEN_SURE % 60))
+
+if [ $DD_SONUC -eq 0 ]; then
+    echo ""
+    echo ""
+    log_yaz "DD transfer başarılı (${GECEN_DAKIKA}dk ${GECEN_SANIYE}sn)"
+    
+    yukleme_cemberi 3 "[◆] Transfer tamamlandı, doğrulanıyor"
     echo ""
     
-    yukleme_cemberi 2 "[◆] Partition analizi yapılıyor"
+    echo -e "  ${C}Transfer süresi:${NC} ${G}${GECEN_DAKIKA} dakika ${GECEN_SANIYE} saniye${NC}"
     echo ""
     
-    echo -e "${M}┌─────────────────────────────────────────────────────┐${NC}"
-    echo -e "${M}│${NC} ${BOLD}${W}UUID Modu - Akıllı Klonlama İşlemi:${NC}               ${M}│${NC}"
-    echo -e "${M}└─────────────────────────────────────────────────────┘${NC}"
-    echo ""
-    
-    TRANSFER_HATA=0
-    
-    if [ "$HAS_PARTITION_TABLE" -eq 1 ]; then
-        # ==========================================
-        # AŞAMA 1: Partition tablosunu kopyala
-        # ==========================================
-        echo -e "${B}━━━ Aşama 1/4: Partition Tablosu Kopyalanıyor ━━━${NC}"
+    # ==========================================
+    # HASH DOĞRULAMA
+    # ==========================================
+    if [ "$DOGRULAMA_YAP" -eq 1 ]; then
+        echo -e "${B}┌─────────────────────────────────────────────────────┐${NC}"
+        echo -e "${B}│${NC} ${BOLD}${W}MD5 Hash Doğrulama:${NC}                                ${B}│${NC}"
+        echo -e "${B}└─────────────────────────────────────────────────────┘${NC}"
         echo ""
         
-        yukleme_cemberi 2 "[◆] Kaynak partition tablosu okunuyor"
+        KAYNAK_BYTE=$(blockdev --getsize64 /dev/$HOCA 2>/dev/null || echo "$KAYNAK_BOYUT")
         
-        # sfdisk ile partition tablosunu kaydet ve hedefe yaz
-        sfdisk -d /dev/$HOCA > /tmp/flashor_ptable.txt 2>/dev/null
+        echo -e "${Y}[◆] Kaynak disk hash hesaplanıyor...${NC}"
+        echo -e "${C}    (Bu işlem disk boyutuna göre uzun sürebilir)${NC}"
+        echo ""
         
-        if [ $? -eq 0 ]; then
-            basarili "Partition tablosu okundu ($PART_TABLE_TYPE)"
-            
-            if [ "$HIZLI_MOD" -eq 0 ]; then
-                echo ""
-                echo -e "${C}  Partition tablosu içeriği:${NC}"
-                cat /tmp/flashor_ptable.txt | head -20 | while read line; do
-                    echo -e "  ${W}$line${NC}"
-                done
-                echo ""
-            fi
-            
-            yukleme_cemberi 2 "[◆] Hedef diske partition tablosu yazılıyor"
-            
-            # Hedef diski temizle
-            wipefs -a /dev/$SENIN &>/dev/null
-            dd if=/dev/zero of=/dev/$SENIN bs=1M count=1 &>/dev/null
-            sync
-            
-            sfdisk /dev/$SENIN < /tmp/flashor_ptable.txt &>/dev/null
-            
-            if [ $? -eq 0 ]; then
-                basarili "Partition tablosu hedefe yazıldı"
-            else
-                echo -e "${R}[✗] Partition tablosu yazılamadı!${NC}"
-                TRANSFER_HATA=1
-            fi
-            
-            # Kernel'e partition tablosunu yeniden okumasını söyle
-            partprobe /dev/$SENIN 2>/dev/null
-            sleep 2
-            
-            # Disk ID'yi de kopyala (MBR disk identifier)
-            if [ "$PART_TABLE_TYPE" == "dos" ]; then
-                DISK_ID=$(sfdisk -d /dev/$HOCA 2>/dev/null | grep "^label-id:" | awk '{print $2}')
-                if [ -n "$DISK_ID" ]; then
-                    basarili "MBR Disk ID kopyalandı: $DISK_ID"
-                fi
-            elif [ "$PART_TABLE_TYPE" == "gpt" ]; then
-                # GPT disk GUID'i sgdisk ile kopyalanabilir
-                if command -v sgdisk &>/dev/null; then
-                    GPT_GUID=$(sgdisk -p /dev/$HOCA 2>/dev/null | grep "Disk identifier" | awk '{print $NF}')
-                    if [ -n "$GPT_GUID" ]; then
-                        sgdisk -U "$GPT_GUID" /dev/$SENIN &>/dev/null
-                        basarili "GPT Disk GUID kopyalandı: $GPT_GUID"
-                    fi
-                fi
-            fi
+        KAYNAK_HASH=$(dd if=/dev/$HOCA bs=1M count=$((KAYNAK_BYTE / 1048576)) 2>/dev/null | md5sum | awk '{print $1}')
+        
+        echo -e "${Y}[◆] Hedef disk hash hesaplanıyor...${NC}"
+        echo ""
+        
+        HEDEF_HASH=$(dd if=/dev/$SENIN bs=1M count=$((KAYNAK_BYTE / 1048576)) 2>/dev/null | md5sum | awk '{print $1}')
+        
+        echo -e "  ${C}Kaynak MD5:${NC} ${W}${KAYNAK_HASH}${NC}"
+        echo -e "  ${C}Hedef  MD5:${NC} ${W}${HEDEF_HASH}${NC}"
+        echo ""
+        
+        if [ "$KAYNAK_HASH" == "$HEDEF_HASH" ]; then
+            basarili "Hash doğrulama BAŞARILI - Veriler birebir aynı!"
+            log_yaz "Hash doğrulama başarılı: $KAYNAK_HASH"
         else
-            echo -e "${R}[✗] Partition tablosu okunamadı!${NC}"
-            TRANSFER_HATA=1
+            echo -e "${R}[✗] Hash doğrulama BAŞARISIZ!${NC}"
+            echo -e "${R}    Kaynak ve hedef verileri farklı!${NC}"
+            echo -e "${Y}    (Disk boyut farkı nedeniyle olabilir, dosyalar yine de doğru olabilir)${NC}"
+            log_yaz "Hash doğrulama başarısız: Kaynak=$KAYNAK_HASH Hedef=$HEDEF_HASH"
         fi
-        
-        rm -f /tmp/flashor_ptable.txt
-        
         echo ""
-        progress_bar 2 "[●] Aşama 1 tamamlandı"
-        echo ""
-        
-        # ==========================================
-        # AŞAMA 2: Her partition için dosya sistemi oluştur ve dosyaları kopyala
-        # ==========================================
-        echo -e "${B}━━━ Aşama 2/4: Dosya Sistemleri ve Veriler Kopyalanıyor ━━━${NC}"
-        echo ""
-        
-        # Kaynak partition'ları tespit et
-        KAYNAK_PARTLAR=$(lsblk -nlo NAME /dev/$HOCA | tail -n +2)
-        HEDEF_PARTLAR=$(lsblk -nlo NAME /dev/$SENIN | tail -n +2)
-        
-        # Partition'ları diziye çevir
-        readarray -t KAYNAK_ARR <<< "$KAYNAK_PARTLAR"
-        readarray -t HEDEF_ARR <<< "$HEDEF_PARTLAR"
-        
-        PART_SAYISI=${#KAYNAK_ARR[@]}
-        
-        echo -e "${C}[ℹ] Toplam ${PART_SAYISI} partition işlenecek${NC}"
-        echo ""
-        
-        for ((p=0; p<PART_SAYISI; p++)); do
-            KAYNAK_PART="${KAYNAK_ARR[$p]}"
-            
-            # Boş satır kontrolü
-            if [ -z "$KAYNAK_PART" ]; then
-                continue
-            fi
-            
-            # Hedef partition'ı bul
-            if [ $p -lt ${#HEDEF_ARR[@]} ]; then
-                HEDEF_PART="${HEDEF_ARR[$p]}"
-            else
-                echo -e "${R}[✗] Hedef partition bulunamadı: index $p${NC}"
-                continue
-            fi
-            
-            if [ -z "$HEDEF_PART" ]; then
-                continue
-            fi
-            
-            KAYNAK_PART=$(echo "$KAYNAK_PART" | tr -d '[:space:]')
-            HEDEF_PART=$(echo "$HEDEF_PART" | tr -d '[:space:]')
-            
-            echo -e "${Y}┌─────────────────────────────────────────────────────┐${NC}"
-            echo -e "${Y}│${NC} ${BOLD}Partition $((p+1))/$PART_SAYISI: /dev/$KAYNAK_PART → /dev/$HEDEF_PART${NC}  ${Y}│${NC}"
-            echo -e "${Y}└─────────────────────────────────────────────────────┘${NC}"
-            
-            # Kaynak partition bilgilerini al
-            PART_FSTYPE=$(blkid -s TYPE -o value /dev/$KAYNAK_PART 2>/dev/null)
-            PART_UUID=$(blkid -s UUID -o value /dev/$KAYNAK_PART 2>/dev/null)
-            PART_LABEL=$(blkid -s LABEL -o value /dev/$KAYNAK_PART 2>/dev/null)
-            PART_PARTUUID=$(blkid -s PARTUUID -o value /dev/$KAYNAK_PART 2>/dev/null)
-            
-            echo -e "  ${C}Dosya Sistemi:${NC} ${G}${PART_FSTYPE:-bilinmiyor}${NC}"
-            echo -e "  ${C}UUID         :${NC} ${G}${PART_UUID:-yok}${NC}"
-            echo -e "  ${C}Label        :${NC} ${G}${PART_LABEL:-yok}${NC}"
-            echo -e "  ${C}PARTUUID     :${NC} ${G}${PART_PARTUUID:-yok}${NC}"
-            echo ""
-            
-            if [ -z "$PART_FSTYPE" ]; then
-                echo -e "${Y}[!] Bu partition'da dosya sistemi bulunamadı, ham kopyalama yapılıyor...${NC}"
-                dd if=/dev/$KAYNAK_PART of=/dev/$HEDEF_PART bs=4M status=progress conv=fsync
-                if [ $? -ne 0 ]; then
-                    echo -e "${R}[✗] Ham kopyalama başarısız: /dev/$KAYNAK_PART${NC}"
-                    TRANSFER_HATA=1
-                else
-                    basarili "Ham kopyalama tamamlandı: /dev/$KAYNAK_PART"
-                fi
-                echo ""
-                continue
-            fi
-            
-            # Dosya sistemi oluştur
-            yukleme_cemberi 1 "[◆] Dosya sistemi oluşturuluyor: $PART_FSTYPE"
-            
-            case "$PART_FSTYPE" in
-                vfat|fat32|fat16|fat12)
-                    # FAT boyutunu belirle
-                    FAT_SIZE=""
-                    case "$PART_FSTYPE" in
-                        fat12) FAT_SIZE="-F 12" ;;
-                        fat16) FAT_SIZE="-F 16" ;;
-                        *) FAT_SIZE="-F 32" ;;
-                    esac
-                    
-                    if [ -n "$PART_LABEL" ]; then
-                        mkfs.vfat $FAT_SIZE -n "$PART_LABEL" /dev/$HEDEF_PART &>/dev/null
-                    else
-                        mkfs.vfat $FAT_SIZE /dev/$HEDEF_PART &>/dev/null
-                    fi
-                    ;;
-                ext2)
-                    if [ -n "$PART_LABEL" ]; then
-                        mkfs.ext2 -F -L "$PART_LABEL" /dev/$HEDEF_PART &>/dev/null
-                    else
-                        mkfs.ext2 -F /dev/$HEDEF_PART &>/dev/null
-                    fi
-                    ;;
-                ext3)
-                    if [ -n "$PART_LABEL" ]; then
-                        mkfs.ext3 -F -L "$PART_LABEL" /dev/$HEDEF_PART &>/dev/null
-                    else
-                        mkfs.ext3 -F /dev/$HEDEF_PART &>/dev/null
-                    fi
-                    ;;
-                ext4)
-                    if [ -n "$PART_LABEL" ]; then
-                        mkfs.ext4 -F -L "$PART_LABEL" /dev/$HEDEF_PART &>/dev/null
-                    else
-                        mkfs.ext4 -F /dev/$HEDEF_PART &>/dev/null
-                    fi
-                    ;;
-                ntfs)
-                    if [ -n "$PART_LABEL" ]; then
-                        mkfs.ntfs -f -L "$PART_LABEL" /dev/$HEDEF_PART &>/dev/null
-                    else
-                        mkfs.ntfs -f /dev/$HEDEF_PART &>/dev/null
-                    fi
-                    ;;
-                exfat)
-                    if [ -n "$PART_LABEL" ]; then
-                        mkfs.exfat -n "$PART_LABEL" /dev/$HEDEF_PART &>/dev/null
-                    else
-                        mkfs.exfat /dev/$HEDEF_PART &>/dev/null
-                    fi
-                    ;;
-                btrfs)
-                    if [ -n "$PART_LABEL" ]; then
-                        mkfs.btrfs -f -L "$PART_LABEL" /dev/$HEDEF_PART &>/dev/null
-                    else
-                        mkfs.btrfs -f /dev/$HEDEF_PART &>/dev/null
-                    fi
-                    ;;
-                xfs)
-                    if [ -n "$PART_LABEL" ]; then
-                        mkfs.xfs -f -L "$PART_LABEL" /dev/$HEDEF_PART &>/dev/null
-                    else
-                        mkfs.xfs -f /dev/$HEDEF_PART &>/dev/null
-                    fi
-                    ;;
-                swap)
-                    if [ -n "$PART_UUID" ]; then
-                        mkswap -U "$PART_UUID" /dev/$HEDEF_PART &>/dev/null
-                    else
-                        mkswap /dev/$HEDEF_PART &>/dev/null
-                    fi
-                    basarili "Swap partition oluşturuldu"
-                    echo ""
-                    continue
-                    ;;
-                *)
-                    echo -e "${Y}[!] Bilinmeyen dosya sistemi ($PART_FSTYPE), ham kopyalama yapılıyor...${NC}"
-                    dd if=/dev/$KAYNAK_PART of=/dev/$HEDEF_PART bs=4M status=progress conv=fsync
-                    if [ $? -ne 0 ]; then
-                        TRANSFER_HATA=1
-                    fi
-                    echo ""
-                    continue
-                    ;;
-            esac
-            
-            if [ $? -eq 0 ]; then
-                basarili "Dosya sistemi oluşturuldu: $PART_FSTYPE"
-            else
-                echo -e "${R}[✗] Dosya sistemi oluşturulamadı!${NC}"
-                TRANSFER_HATA=1
-                continue
-            fi
-            
-            # UUID'yi ayarla
-            if [ -n "$PART_UUID" ]; then
-                yukleme_cemberi 1 "[◆] UUID ayarlanıyor: $PART_UUID"
-                
-                case "$PART_FSTYPE" in
-                    ext2|ext3|ext4)
-                        tune2fs -U "$PART_UUID" /dev/$HEDEF_PART &>/dev/null
-                        ;;
-                    vfat|fat32|fat16|fat12)
-                        # FAT UUID formatı: XXXX-XXXX
-                        if command -v mlabel &>/dev/null; then
-                            # mtools ile UUID ayarla
-                            VOLUME_ID=$(echo "$PART_UUID" | tr -d '-')
-                            printf "\x${VOLUME_ID:6:2}\x${VOLUME_ID:4:2}\x${VOLUME_ID:2:2}\x${VOLUME_ID:0:2}" | \
-                                dd of=/dev/$HEDEF_PART bs=1 seek=67 count=4 conv=notrunc &>/dev/null 2>&1
-                            # FAT16 offset farklı olabilir, FAT32 için seek=67
-                        else
-                            # dd ile doğrudan Volume Serial Number yaz
-                            VOLUME_ID=$(echo "$PART_UUID" | tr -d '-')
-                            # FAT32 volume ID offset: 67 (0x43)
-                            # FAT16 volume ID offset: 39 (0x27)
-                            FAT_TYPE_CHECK=$(file -s /dev/$HEDEF_PART 2>/dev/null)
-                            if echo "$FAT_TYPE_CHECK" | grep -qi "FAT (16 bit)"; then
-                                SEEK_POS=39
-                            else
-                                SEEK_POS=67
-                            fi
-                            printf "\x${VOLUME_ID:6:2}\x${VOLUME_ID:4:2}\x${VOLUME_ID:2:2}\x${VOLUME_ID:0:2}" | \
-                                dd of=/dev/$HEDEF_PART bs=1 seek=$SEEK_POS count=4 conv=notrunc &>/dev/null 2>&1
-                        fi
-                        ;;
-                    ntfs)
-                        if command -v ntfslabel &>/dev/null; then
-                            # NTFS UUID = Volume Serial Number
-                            # ntfsfix veya doğrudan yazma ile ayarlanabilir
-                            NTFS_SERIAL=$(echo "$PART_UUID" | tr -d '[:space:]')
-                            printf "\x${NTFS_SERIAL:14:2}\x${NTFS_SERIAL:12:2}\x${NTFS_SERIAL:10:2}\x${NTFS_SERIAL:8:2}\x${NTFS_SERIAL:6:2}\x${NTFS_SERIAL:4:2}\x${NTFS_SERIAL:2:2}\x${NTFS_SERIAL:0:2}" | \
-                                dd of=/dev/$HEDEF_PART bs=1 seek=72 count=8 conv=notrunc &>/dev/null 2>&1
-                        fi
-                        ;;
-                    btrfs)
-                        if command -v btrfstune &>/dev/null; then
-                            btrfstune -U "$PART_UUID" /dev/$HEDEF_PART &>/dev/null
-                        fi
-                        ;;
-                    xfs)
-                        if command -v xfs_admin &>/dev/null; then
-                            xfs_admin -U "$PART_UUID" /dev/$HEDEF_PART &>/dev/null
-                        fi
-                        ;;
-                    exfat)
-                        # exFAT UUID doğrudan volume serial ile yazılır
-                        EXFAT_SERIAL=$(echo "$PART_UUID" | tr -d '-')
-                        printf "\x${EXFAT_SERIAL:6:2}\x${EXFAT_SERIAL:4:2}\x${EXFAT_SERIAL:2:2}\x${EXFAT_SERIAL:0:2}" | \
-                            dd of=/dev/$HEDEF_PART bs=1 seek=100 count=4 conv=notrunc &>/dev/null 2>&1
-                        ;;
-                esac
-                
-                # UUID doğrulama
-                NEW_UUID=$(blkid -s UUID -o value /dev/$HEDEF_PART 2>/dev/null)
-                if [ "$NEW_UUID" == "$PART_UUID" ]; then
-                    basarili "UUID başarıyla ayarlandı: $PART_UUID"
-                else
-                    echo -e "${Y}[!] UUID ayarlanamadı (Kaynak: $PART_UUID, Hedef: ${NEW_UUID:-boş})${NC}"
-                    echo -e "${Y}    Bu bazı dosya sistemi türlerinde normal olabilir${NC}"
-                fi
-            fi
-            
-            # Dosyaları kopyala
-            echo ""
-            yukleme_cemberi 1 "[◆] Dosyalar kopyalanıyor"
-            
-            # Kaynak partition'ı mount et
-            mount -o ro /dev/$KAYNAK_PART "$UUID_KAYNAK_MNT" 2>/dev/null
-            MOUNT_KAYNAK_OK=$?
-            
-            # Hedef partition'ı mount et
-            mount /dev/$HEDEF_PART "$UUID_HEDEF_MNT" 2>/dev/null
-            MOUNT_HEDEF_OK=$?
-            
-            if [ $MOUNT_KAYNAK_OK -eq 0 ] && [ $MOUNT_HEDEF_OK -eq 0 ]; then
-                # Kullanılan alan hesapla
-                KULLANILAN=$(du -sm "$UUID_KAYNAK_MNT" 2>/dev/null | awk '{print $1}')
-                DOSYA_SAYISI=$(find "$UUID_KAYNAK_MNT" -type f 2>/dev/null | wc -l)
-                DIZIN_SAYISI=$(find "$UUID_KAYNAK_MNT" -type d 2>/dev/null | wc -l)
-                
-                echo -e "  ${C}Kopyalanacak veri :${NC} ${G}${KULLANILAN:-bilinmiyor} MB${NC}"
-                echo -e "  ${C}Dosya sayısı      :${NC} ${G}${DOSYA_SAYISI:-0}${NC}"
-                echo -e "  ${C}Dizin sayısı      :${NC} ${G}${DIZIN_SAYISI:-0}${NC}"
-                echo ""
-                
-                # Dosya kopyalama
-                if [ "$KOPYA_ARACI" == "rsync" ]; then
-                    echo -e "${C}[●] rsync ile dosyalar kopyalanıyor...${NC}"
-                    echo ""
-                    rsync -aHAXWS --info=progress2 --no-compress "$UUID_KAYNAK_MNT/" "$UUID_HEDEF_MNT/"
-                    KOPYA_SONUC=$?
-                else
-                    echo -e "${C}[●] cp ile dosyalar kopyalanıyor...${NC}"
-                    echo ""
-                    cp -a "$UUID_KAYNAK_MNT/." "$UUID_HEDEF_MNT/"
-                    KOPYA_SONUC=$?
-                fi
-                
-                if [ $KOPYA_SONUC -eq 0 ]; then
-                    echo ""
-                    basarili "Dosyalar başarıyla kopyalandı (/dev/$KAYNAK_PART)"
-                else
-                    echo ""
-                    echo -e "${R}[✗] Dosya kopyalama hatası: /dev/$KAYNAK_PART${NC}"
-                    TRANSFER_HATA=1
-                fi
-            else
-                if [ $MOUNT_KAYNAK_OK -ne 0 ]; then
-                    echo -e "${Y}[!] Kaynak partition mount edilemedi (/dev/$KAYNAK_PART)${NC}"
-                    echo -e "${Y}    Ham kopyalama yapılıyor...${NC}"
-                    umount "$UUID_HEDEF_MNT" 2>/dev/null
-                    dd if=/dev/$KAYNAK_PART of=/dev/$HEDEF_PART bs=4M status=progress conv=fsync
-                    if [ $? -ne 0 ]; then
-                        TRANSFER_HATA=1
-                    fi
-                fi
-                if [ $MOUNT_HEDEF_OK -ne 0 ]; then
-                    echo -e "${R}[✗] Hedef partition mount edilemedi (/dev/$HEDEF_PART)${NC}"
-                    TRANSFER_HATA=1
-                fi
-            fi
-            
-            # Unmount
-            sync
-            umount "$UUID_KAYNAK_MNT" 2>/dev/null
-            umount "$UUID_HEDEF_MNT" 2>/dev/null
-            
-            echo ""
-        done
-        
     else
-        # ==========================================
-        # PARTITION TABLOSU OLMAYAN DİSK (düz format)
-        # ==========================================
-        echo -e "${B}━━━ Düz Formatlı Disk Klonlama ━━━${NC}"
+        progress_bar 3 "[●] Veri bütünlüğü kontrol ediliyor (temel)"
         echo ""
-        
-        DIRECT_FSTYPE=$(blkid -s TYPE -o value /dev/$HOCA 2>/dev/null)
-        DIRECT_UUID=$(blkid -s UUID -o value /dev/$HOCA 2>/dev/null)
-        DIRECT_LABEL=$(blkid -s LABEL -o value /dev/$HOCA 2>/dev/null)
-        
-        echo -e "  ${C}Dosya Sistemi:${NC} ${G}$DIRECT_FSTYPE${NC}"
-        echo -e "  ${C}UUID         :${NC} ${G}${DIRECT_UUID:-yok}${NC}"
-        echo -e "  ${C}Label        :${NC} ${G}${DIRECT_LABEL:-yok}${NC}"
-        echo ""
-        
-        # Dosya sistemi oluştur
-        yukleme_cemberi 2 "[◆] Hedef diske dosya sistemi oluşturuluyor: $DIRECT_FSTYPE"
-        
-        case "$DIRECT_FSTYPE" in
-            vfat|fat32|fat16|fat12)
-                FAT_SIZE="-F 32"
-                [ "$DIRECT_FSTYPE" == "fat16" ] && FAT_SIZE="-F 16"
-                [ "$DIRECT_FSTYPE" == "fat12" ] && FAT_SIZE="-F 12"
-                if [ -n "$DIRECT_LABEL" ]; then
-                    mkfs.vfat $FAT_SIZE -n "$DIRECT_LABEL" /dev/$SENIN &>/dev/null
-                else
-                    mkfs.vfat $FAT_SIZE /dev/$SENIN &>/dev/null
-                fi
-                ;;
-            ext2) mkfs.ext2 -F ${DIRECT_LABEL:+-L "$DIRECT_LABEL"} /dev/$SENIN &>/dev/null ;;
-            ext3) mkfs.ext3 -F ${DIRECT_LABEL:+-L "$DIRECT_LABEL"} /dev/$SENIN &>/dev/null ;;
-            ext4) mkfs.ext4 -F ${DIRECT_LABEL:+-L "$DIRECT_LABEL"} /dev/$SENIN &>/dev/null ;;
-            ntfs) mkfs.ntfs -f ${DIRECT_LABEL:+-L "$DIRECT_LABEL"} /dev/$SENIN &>/dev/null ;;
-            exfat) mkfs.exfat ${DIRECT_LABEL:+-n "$DIRECT_LABEL"} /dev/$SENIN &>/dev/null ;;
-            btrfs) mkfs.btrfs -f ${DIRECT_LABEL:+-L "$DIRECT_LABEL"} /dev/$SENIN &>/dev/null ;;
-            xfs) mkfs.xfs -f ${DIRECT_LABEL:+-L "$DIRECT_LABEL"} /dev/$SENIN &>/dev/null ;;
-            *)
-                echo -e "${Y}[!] Bilinmeyen dosya sistemi, dd ile tam kopyalama yapılıyor...${NC}"
-                dd if=/dev/$HOCA of=/dev/$SENIN bs=4M status=progress conv=fsync
-                if [ $? -ne 0 ]; then TRANSFER_HATA=1; fi
-                # Temizlik
-                rmdir "$UUID_KAYNAK_MNT" "$UUID_HEDEF_MNT" 2>/dev/null
-                # Sonuca atla
-                if [ $TRANSFER_HATA -eq 0 ]; then
-                    basarili "Transfer tamamlandı"
-                fi
-                # Buradan aşağıdaki UUID ayarlama kısmına geçmeyeceğiz
-                UUID_SKIP_COPY=1
-                ;;
-        esac
-        
-        if [ "${UUID_SKIP_COPY:-0}" -ne 1 ]; then
-            basarili "Dosya sistemi oluşturuldu: $DIRECT_FSTYPE"
-            
-            # UUID ayarla
-            if [ -n "$DIRECT_UUID" ]; then
-                yukleme_cemberi 1 "[◆] UUID ayarlanıyor: $DIRECT_UUID"
-                case "$DIRECT_FSTYPE" in
-                    ext2|ext3|ext4) tune2fs -U "$DIRECT_UUID" /dev/$SENIN &>/dev/null ;;
-                    vfat|fat32|fat16|fat12)
-                        VOLUME_ID=$(echo "$DIRECT_UUID" | tr -d '-')
-                        FAT_TYPE_CHECK=$(file -s /dev/$SENIN 2>/dev/null)
-                        if echo "$FAT_TYPE_CHECK" | grep -qi "FAT (16 bit)"; then SEEK_POS=39; else SEEK_POS=67; fi
-                        printf "\x${VOLUME_ID:6:2}\x${VOLUME_ID:4:2}\x${VOLUME_ID:2:2}\x${VOLUME_ID:0:2}" | \
-                            dd of=/dev/$SENIN bs=1 seek=$SEEK_POS count=4 conv=notrunc &>/dev/null 2>&1
-                        ;;
-                    btrfs) command -v btrfstune &>/dev/null && btrfstune -U "$DIRECT_UUID" /dev/$SENIN &>/dev/null ;;
-                    xfs) command -v xfs_admin &>/dev/null && xfs_admin -U "$DIRECT_UUID" /dev/$SENIN &>/dev/null ;;
-                esac
-                
-                NEW_UUID=$(blkid -s UUID -o value /dev/$SENIN 2>/dev/null)
-                if [ "$NEW_UUID" == "$DIRECT_UUID" ]; then
-                    basarili "UUID başarıyla ayarlandı: $DIRECT_UUID"
-                else
-                    echo -e "${Y}[!] UUID tam ayarlanamadı (Kaynak: $DIRECT_UUID, Hedef: ${NEW_UUID:-boş})${NC}"
-                fi
-            fi
-            
-            # Dosyaları kopyala
-            echo ""
-            yukleme_cemberi 1 "[◆] Dosyalar kopyalanıyor"
-            
-            mount -o ro /dev/$HOCA "$UUID_KAYNAK_MNT" 2>/dev/null
-            mount /dev/$SENIN "$UUID_HEDEF_MNT" 2>/dev/null
-            
-            if [ $? -eq 0 ]; then
-                KULLANILAN=$(du -sm "$UUID_KAYNAK_MNT" 2>/dev/null | awk '{print $1}')
-                DOSYA_SAYISI=$(find "$UUID_KAYNAK_MNT" -type f 2>/dev/null | wc -l)
-                
-                echo -e "  ${C}Kopyalanacak veri:${NC} ${G}${KULLANILAN:-bilinmiyor} MB${NC}"
-                echo -e "  ${C}Dosya sayısı     :${NC} ${G}${DOSYA_SAYISI:-0}${NC}"
-                echo ""
-                
-                if [ "$KOPYA_ARACI" == "rsync" ]; then
-                    echo -e "${C}[●] rsync ile dosyalar kopyalanıyor...${NC}"
-                    echo ""
-                    rsync -aHAXWS --info=progress2 --no-compress "$UUID_KAYNAK_MNT/" "$UUID_HEDEF_MNT/"
-                    KOPYA_SONUC=$?
-                else
-                    echo -e "${C}[●] cp ile dosyalar kopyalanıyor...${NC}"
-                    echo ""
-                    cp -a "$UUID_KAYNAK_MNT/." "$UUID_HEDEF_MNT/"
-                    KOPYA_SONUC=$?
-                fi
-                
-                if [ $KOPYA_SONUC -eq 0 ]; then
-                    echo ""
-                    basarili "Dosyalar başarıyla kopyalandı"
-                else
-                    echo ""
-                    echo -e "${R}[✗] Dosya kopyalama hatası!${NC}"
-                    TRANSFER_HATA=1
-                fi
-            else
-                echo -e "${R}[✗] Disk mount edilemedi!${NC}"
-                TRANSFER_HATA=1
-            fi
-            
-            sync
-            umount "$UUID_KAYNAK_MNT" 2>/dev/null
-            umount "$UUID_HEDEF_MNT" 2>/dev/null
-        fi
     fi
-    
-    # ==========================================
-    # AŞAMA 3: Doğrulama
-    # ==========================================
-    echo ""
-    echo -e "${B}━━━ Aşama 3/4: Doğrulama ━━━${NC}"
-    echo ""
-    
-    progress_bar 2 "[●] UUID ve dosya sistemi doğrulanıyor"
-    echo ""
-    
-    echo -e "${C}┌─────────────────────────────────────────────────────┐${NC}"
-    echo -e "${C}│${NC} ${BOLD}${W}Doğrulama Raporu:${NC}                                 ${C}│${NC}"
-    echo -e "${C}└─────────────────────────────────────────────────────┘${NC}"
-    echo ""
-    
-    if [ "$HAS_PARTITION_TABLE" -eq 1 ] 2>/dev/null; then
-        # Her partition'ın UUID'sini karşılaştır
-        KAYNAK_PARTLAR=$(lsblk -nlo NAME /dev/$HOCA | tail -n +2)
-        HEDEF_PARTLAR=$(lsblk -nlo NAME /dev/$SENIN | tail -n +2)
-        
-        readarray -t KAYNAK_ARR <<< "$KAYNAK_PARTLAR"
-        readarray -t HEDEF_ARR <<< "$HEDEF_PARTLAR"
-        
-        for ((p=0; p<${#KAYNAK_ARR[@]}; p++)); do
-            KP="${KAYNAK_ARR[$p]}"
-            HP="${HEDEF_ARR[$p]:-}"
-            
-            [ -z "$KP" ] && continue
-            [ -z "$HP" ] && continue
-            
-            KP=$(echo "$KP" | tr -d '[:space:]')
-            HP=$(echo "$HP" | tr -d '[:space:]')
-            
-            K_UUID=$(blkid -s UUID -o value /dev/$KP 2>/dev/null)
-            H_UUID=$(blkid -s UUID -o value /dev/$HP 2>/dev/null)
-            K_FS=$(blkid -s TYPE -o value /dev/$KP 2>/dev/null)
-            H_FS=$(blkid -s TYPE -o value /dev/$HP 2>/dev/null)
-            
-            echo -e "  ${W}Partition $((p+1)):${NC}"
-            
-            if [ "$K_FS" == "$H_FS" ]; then
-                echo -e "    ${G}[✔]${NC} Dosya sistemi eşleşti: ${G}$K_FS${NC}"
-            else
-                echo -e "    ${R}[✗]${NC} Dosya sistemi uyumsuz: Kaynak=$K_FS, Hedef=$H_FS"
-            fi
-            
-            if [ "$K_UUID" == "$H_UUID" ] && [ -n "$K_UUID" ]; then
-                echo -e "    ${G}[✔]${NC} UUID eşleşti: ${G}$K_UUID${NC}"
-            elif [ -n "$K_UUID" ]; then
-                echo -e "    ${Y}[~]${NC} UUID: Kaynak=$K_UUID, Hedef=${H_UUID:-boş}"
-            else
-                echo -e "    ${Y}[~]${NC} UUID bilgisi yok"
-            fi
-            echo ""
-        done
-    else
-        K_UUID=$(blkid -s UUID -o value /dev/$HOCA 2>/dev/null)
-        H_UUID=$(blkid -s UUID -o value /dev/$SENIN 2>/dev/null)
-        K_FS=$(blkid -s TYPE -o value /dev/$HOCA 2>/dev/null)
-        H_FS=$(blkid -s TYPE -o value /dev/$SENIN 2>/dev/null)
-        
-        if [ "$K_FS" == "$H_FS" ]; then
-            echo -e "  ${G}[✔]${NC} Dosya sistemi eşleşti: ${G}$K_FS${NC}"
-        else
-            echo -e "  ${R}[✗]${NC} Dosya sistemi uyumsuz: Kaynak=$K_FS, Hedef=$H_FS"
-        fi
-        
-        if [ "$K_UUID" == "$H_UUID" ] && [ -n "$K_UUID" ]; then
-            echo -e "  ${G}[✔]${NC} UUID eşleşti: ${G}$K_UUID${NC}"
-        elif [ -n "$K_UUID" ]; then
-            echo -e "  ${Y}[~]${NC} UUID: Kaynak=$K_UUID, Hedef=${H_UUID:-boş}"
-        fi
-    fi
-    
-    echo ""
-    
-    # ==========================================
-    # AŞAMA 4: Temizlik ve Sync
-    # ==========================================
-    echo -e "${B}━━━ Aşama 4/4: Temizlik ve Sync ━━━${NC}"
-    echo ""
     
     yukleme_cemberi 2 "[◆] Buffer sync yapılıyor"
     sync
-    basarili "Tüm veriler diske yazıldı"
+    basarili "Tüm veriler diske yazıldı, lütfen bekleyin ve asla USB disklerinizi çıkarmayın."
     
-    # Geçici dizinleri temizle
-    rmdir "$UUID_KAYNAK_MNT" 2>/dev/null
-    rmdir "$UUID_HEDEF_MNT" 2>/dev/null
-    basarili "Geçici dosyalar temizlendi"
-    
-    echo ""
-    
-    if [ $TRANSFER_HATA -eq 0 ]; then
-        # Başarılı
+    # ==========================================
+    # GÜVENLİK ADIMI (EJECT)
+    # ==========================================
+    if [ "$EJECT_YAP" -eq 1 ]; then
         echo ""
         yaz "[🔌] Bekleyin, hedef disk güvenli moda alınıyor..." "$W" 0.03
         
@@ -1401,197 +1188,102 @@ if [ "$UUID_MOD" -eq 1 ]; then
         
         basarili "Hedef disk (/dev/$SENIN) sistemden ayrıldı"
         echo -e "${Y}[!] Artık otomatik mount edilemez, güvenle çekebilirsin.${NC}"
-        
-        echo ""
-        sleep 1
-        
-        # BAŞARI EKRANI
-        clear
-        echo ""
-        echo ""
-        
-        if [ "$HIZLI_MOD" -eq 0 ]; then
-            for i in {1..3}; do
-                echo -e "${G}          ★ ★ ★ ★ ★ ★ ★ ★ ★ ★${NC}"
-                sleep 0.2
-                echo -ne "\033[1A\033[2K"
-            done
-        fi
-        
-        echo -e "${G}╔════════════════════════════════════════════════════╗${NC}"
-        echo -e "${G}║                                                    ║${NC}"
-        echo -e "${G}║                                                    ║${NC}"
-        echo -e "${G}║${NC}       ${BOLD}${BLINK}✔  İŞLEM BAŞARIYLA TAMAMLANDI!  ✔${NC}        ${G}║${NC}"
-        echo -e "${G}║                                                    ║${NC}"
-        echo -e "${G}║                                                    ║${NC}"
-        echo -e "${G}╚════════════════════════════════════════════════════╝${NC}"
-        echo ""
-        custom_sleep 1
-        
-        if [ "$HIZLI_MOD" -eq 0 ]; then
-            for i in {1..10}; do
-                case $((i % 5)) in
-                    0) echo -ne "  ${Y}★${NC}" ;;
-                    1) echo -ne " ${G}✦${NC}" ;;
-                    2) echo -ne " ${C}✧${NC}" ;;
-                    3) echo -ne " ${M}✦${NC}" ;;
-                    4) echo -ne " ${B}★${NC}" ;;
-                esac
-                sleep 0.15
-            done
-            echo ""
-        fi
-        echo ""
-        
-        yaz "  [📦] /dev/$SENIN artık /dev/$HOCA'nın UUID klonu" "$C" 0.02
-        custom_sleep 0.5
-        yaz "  [✔] Sadece dolu veriler kopyalandı (hızlı klon)!" "$G" 0.02
-        custom_sleep 0.5
-        yaz "  [✔] UUID değerleri korundu!" "$G" 0.02
-        custom_sleep 0.5
-        
-        echo ""
-        echo -e "  ${C}[📦] Klonlama Raporu: Başarılı (UUID Modu)${NC}"
-        echo -e "  ${G}[✔] Hedef disk (/dev/$SENIN) şimdi kullanılabilir${NC}"
-        echo -e "  ${W}[ℹ] Güvenle çıkarabilirsin.${NC}"
-        
-        echo ""
-        echo -e "${M}┌─────────────────────────────────────────────────────┐${NC}"
-        echo -e "${M}│${NC}                                                     ${M}│${NC}"
-        echo -ne "${M}│${NC}  "; yaz "Tahtayı açmak için hazır mısın? 😎" "$Y$BOLD" 0.03;
-        echo -e "${M}│${NC}                                                     ${M}│${NC}"
-        echo -e "${M}└─────────────────────────────────────────────────────┘${NC}"
-        echo ""
+        log_yaz "Hedef disk eject edildi: /dev/$SENIN"
     else
         echo ""
-        echo -e "${R}╔════════════════════════════════════════════════════╗${NC}"
-        echo -e "${R}║${NC}          ${BOLD}✗  İŞLEM HATALARLA TAMAMLANDI!${NC}          ${R}║${NC}"
-        echo -e "${R}╚════════════════════════════════════════════════════╝${NC}"
-        echo ""
-        echo -e "${R}[!] Bazı partition'lar kopyalanırken hata oluştu.${NC}"
-        echo -e "${Y}[!] Disk bağlantılarını kontrol edin ve tekrar deneyin.${NC}"
-        
-        # Temizlik
-        rmdir "$UUID_KAYNAK_MNT" 2>/dev/null
-        rmdir "$UUID_HEDEF_MNT" 2>/dev/null
-        exit 1
+        echo -e "${Y}[ℹ] Eject kapalı - disk hala bağlı: /dev/$SENIN${NC}"
+        log_yaz "Eject atlandı (ayarlardan kapalı)"
     fi
     
-else
-    # ========================================
-    # NORMAL DD MODU FLAŞLAMA (orijinal kod)
-    # ========================================
-    yaz "[🚀] Transfer motoru çalıştırılıyor..." "$W"
-    bekle 2 20
+    echo ""
+    sleep 1
+    
+    # BAŞARI EKRANI
+    clear
+    echo ""
     echo ""
     
-    yukleme_cemberi 3 "[◆] Veri transferi başlatılıyor"
-    echo ""
+    if [ "$HIZLI_MOD" -eq 0 ]; then
+        for i in {1..3}; do
+            echo -e "${G}          ★ ★ ★ ★ ★ ★ ★ ★ ★ ★${NC}"
+            sleep 0.2
+            echo -ne "\033[1A\033[2K"
+        done
+    fi
     
-    echo -e "${M}┌─────────────────────────────────────────────────────┐${NC}"
-    echo -e "${M}│${NC} ${BOLD}${W}Gerçek Zamanlı Transfer İzleme:${NC}                   ${M}│${NC}"
-    echo -e "${M}└─────────────────────────────────────────────────────┘${NC}"
+    echo -e "${G}╔════════════════════════════════════════════════════╗${NC}"
+    echo -e "${G}║                                                    ║${NC}"
+    echo -e "${G}║                                                    ║${NC}"
+    echo -e "${G}║${NC}       ${BOLD}${BLINK}✔  İŞLEM BAŞARIYLA TAMAMLANDI!  ✔${NC}        ${G}║${NC}"
+    echo -e "${G}║                                                    ║${NC}"
+    echo -e "${G}║                                                    ║${NC}"
+    echo -e "${G}╚════════════════════════════════════════════════════╝${NC}"
     echo ""
     custom_sleep 1
     
-    echo -e "${C}[●] Transfer başladı... (dd progress aşağıda)${NC}"
+    if [ "$HIZLI_MOD" -eq 0 ]; then
+        for i in {1..10}; do
+            case $((i % 5)) in
+                0) echo -ne "  ${Y}★${NC}" ;;
+                1) echo -ne " ${G}✦${NC}" ;;
+                2) echo -ne " ${C}✧${NC}" ;;
+                3) echo -ne " ${M}✦${NC}" ;;
+                4) echo -ne " ${B}★${NC}" ;;
+            esac
+            sleep 0.15
+        done
+        echo ""
+    fi
     echo ""
     
-    # DD işlemi
-    dd if=/dev/$HOCA of=/dev/$SENIN bs=4M status=progress conv=fsync
+    yaz "  [📦] /dev/$SENIN artık /dev/$HOCA'nın tam kopyası" "$C" 0.02
+    custom_sleep 0.5
+    yaz "  [✔] Disk başarıyla oluşturuldu!" "$G" 0.02
+    custom_sleep 0.5
     
-    if [ $? -eq 0 ]; then
-        echo ""
-        echo ""
-        yukleme_cemberi 3 "[◆] Transfer tamamlandı, doğrulanıyor"
-        echo ""
-        
-        progress_bar 3 "[●] Veri bütünlüğü kontrol ediliyor"
-        echo ""
-        
-        yukleme_cemberi 2 "[◆] Buffer sync yapılıyor"
-        sync
-        basarili "Tüm veriler diske yazıldı, lütfen bekleyin ve asla USB disklerinizi çıkarmayın."
-        
-        # ==========================================
-        # GÜVENLİK ADIMI (EJECT)
-        # ==========================================
-        echo ""
-        yaz "[🔌] Bekleyin, hedef disk güvenli moda alınıyor..." "$W" 0.03
-        
-        eject /dev/$SENIN 2>/dev/null || umount /dev/$SENIN* 2>/dev/null
-        
-        basarili "Hedef disk (/dev/$SENIN) sistemden ayrıldı"
-        echo -e "${Y}[!] Artık otomatik mount edilemez, güvenle çekebilirsin.${NC}"
-        
-        echo ""
-        sleep 1
-        
-        # BAŞARI EKRANI
-        clear
-        echo ""
-        echo ""
-        
-        if [ "$HIZLI_MOD" -eq 0 ]; then
-            for i in {1..3}; do
-                echo -e "${G}          ★ ★ ★ ★ ★ ★ ★ ★ ★ ★${NC}"
-                sleep 0.2
-                echo -ne "\033[1A\033[2K"
-            done
-        fi
-        
-        echo -e "${G}╔════════════════════════════════════════════════════╗${NC}"
-        echo -e "${G}║                                                    ║${NC}"
-        echo -e "${G}║                                                    ║${NC}"
-        echo -e "${G}║${NC}       ${BOLD}${BLINK}✔  İŞLEM BAŞARIYLA TAMAMLANDI!  ✔${NC}        ${G}║${NC}"
-        echo -e "${G}║                                                    ║${NC}"
-        echo -e "${G}║                                                    ║${NC}"
-        echo -e "${G}╚════════════════════════════════════════════════════╝${NC}"
-        echo ""
-        custom_sleep 1
-        
-        if [ "$HIZLI_MOD" -eq 0 ]; then
-            for i in {1..10}; do
-                case $((i % 5)) in
-                    0) echo -ne "  ${Y}★${NC}" ;;
-                    1) echo -ne " ${G}✦${NC}" ;;
-                    2) echo -ne " ${C}✧${NC}" ;;
-                    3) echo -ne " ${M}✦${NC}" ;;
-                    4) echo -ne " ${B}★${NC}" ;;
-                esac
-                sleep 0.15
-            done
-            echo ""
-        fi
-        echo ""
-        
-        yaz "  [📦] /dev/$SENIN artık /dev/$HOCA'nın tam kopyası" "$C" 0.02
-        custom_sleep 0.5
-        yaz "  [✔] Disk başarıyla oluşturuldu!" "$G" 0.02
-        custom_sleep 0.5
-        
-        echo ""
-        echo -e "  ${C}[📦] Klonlama Raporu: Başarılı${NC}"
-        echo -e "  ${G}[✔] Hedef disk (/dev/$SENIN) şimdi kullanılabilir${NC}"
-        echo -e "  ${W}[ℹ] Güvenle çıkarabilirsin.${NC}"
-        
-        echo ""
-        echo -e "${M}┌─────────────────────────────────────────────────────┐${NC}"
-        echo -e "${M}│${NC}                                                     ${M}│${NC}"
-        echo -ne "${M}│${NC}  "; yaz "Tahtayı açmak için hazır mısın? 😎" "$Y$BOLD" 0.03;
-        echo -e "${M}│${NC}                                                     ${M}│${NC}"
-        echo -e "${M}└─────────────────────────────────────────────────────┘${NC}"
-        echo ""
-        
-    else
-        echo ""
-        echo -e "${R}╔════════════════════════════════════════════════════╗${NC}"
-        echo -e "${R}║${NC}          ${BOLD}✗  İŞLEM BAŞARISIZ!${NC}                      ${R}║${NC}"
-        echo -e "${R}╚════════════════════════════════════════════════════╝${NC}"
-        echo ""
-        echo -e "${R}[!] Transfer sırasında hata oluştu.${NC}"
-        custom_sleep 1
-        echo -e "${Y}[!] Disk bağlantılarını kontrol edin.${NC}"
-        exit 1
+    echo ""
+    echo -e "${C}┌─────────────────────────────────────────────────────┐${NC}"
+    echo -e "${C}│${NC} ${BOLD}${W}Klonlama Raporu:${NC}                                  ${C}│${NC}"
+    echo -e "${C}├─────────────────────────────────────────────────────┤${NC}"
+    echo -e "${C}│${NC}  ${W}Kaynak       :${NC} ${G}/dev/$HOCA${NC} (${KAYNAK_BOYUT_HR})              ${C}│${NC}"
+    echo -e "${C}│${NC}  ${W}Hedef        :${NC} ${G}/dev/$SENIN${NC} (${HEDEF_BOYUT_HR})              ${C}│${NC}"
+    echo -e "${C}│${NC}  ${W}Block Size   :${NC} ${Y}${DD_BLOCK_SIZE}${NC}                              ${C}│${NC}"
+    echo -e "${C}│${NC}  ${W}Süre         :${NC} ${G}${GECEN_DAKIKA}dk ${GECEN_SANIYE}sn${NC}                        ${C}│${NC}"
+    echo -e "${C}│${NC}  ${W}Durum        :${NC} ${G}BAŞARILI${NC}                           ${C}│${NC}"
+    if [ "$DOGRULAMA_YAP" -eq 1 ] && [ "${KAYNAK_HASH:-x}" == "${HEDEF_HASH:-y}" ]; then
+        echo -e "${C}│${NC}  ${W}Hash Doğrulama:${NC} ${G}EŞLEŞME BAŞARILI${NC}                ${C}│${NC}"
     fi
+    echo -e "${C}└─────────────────────────────────────────────────────┘${NC}"
+
+    echo ""
+    echo -e "${M}┌─────────────────────────────────────────────────────┐${NC}"
+    echo -e "${M}│${NC}                                                     ${M}│${NC}"
+    echo -ne "${M}│${NC}  "; yaz "Tahtayı açmak için hazır mısın? 😎" "$Y$BOLD" 0.03;
+    echo -e "${M}│${NC}                                                     ${M}│${NC}"
+    echo -e "${M}└─────────────────────────────────────────────────────┘${NC}"
+    echo ""
+    
+    log_yaz "İşlem başarıyla tamamlandı"
+    log_yaz "========================================="
+    
+else
+    echo ""
+    log_yaz "HATA: DD transfer başarısız (çıkış kodu: $DD_SONUC)"
+    
+    echo -e "${R}╔════════════════════════════════════════════════════╗${NC}"
+    echo -e "${R}║${NC}          ${BOLD}✗  İŞLEM BAŞARISIZ!${NC}                      ${R}║${NC}"
+    echo -e "${R}╚════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    echo -e "${R}[!] Transfer sırasında hata oluştu.${NC}"
+    echo -e "${R}[!] DD çıkış kodu: ${DD_SONUC}${NC}"
+    custom_sleep 1
+    echo -e "${Y}[!] Disk bağlantılarını kontrol edin.${NC}"
+    echo -e "${Y}[!] Geçen süre: ${GECEN_DAKIKA}dk ${GECEN_SANIYE}sn${NC}"
+    
+    if [ -n "$LOG_DOSYASI" ]; then
+        echo -e "${C}[ℹ] Detaylı log: ${LOG_DOSYASI}${NC}"
+    fi
+    
+    log_yaz "========================================="
+    exit 1
 fi
